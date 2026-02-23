@@ -27,7 +27,9 @@ def list_products_for_obs(obsid: str) -> list[dict[str, Any]]:
 
     normalized: list[dict[str, Any]] = []
     for row in products:
-        normalized.append(_normalize_product_row(obsid, row))
+        normalized_row = _normalize_product_row(obsid, row)
+        if _should_include_product(normalized_row):
+            normalized.append(normalized_row)
     return normalized
 
 
@@ -38,6 +40,8 @@ def _normalize_product_row(obsid: str, row: Any) -> dict[str, Any]:
     )
     derived_product_id = mast_product_id or _derive_product_id(obsid, filename)
 
+    kind, is_plottable_candidate = _classify_product(filename)
+
     return {
         "product_id": derived_product_id,
         "productFilename": filename,
@@ -45,9 +49,40 @@ def _normalize_product_row(obsid: str, row: Any) -> dict[str, Any]:
         "productType": _as_string_or_none(_get_value(row, "productType")),
         "calib_level": _as_int_or_none(_get_value(row, "calib_level")),
         "description": _as_string_or_none(_get_value(row, "description")),
-        "kind": "unknown",
-        "is_plottable_candidate": False,
+        "kind": kind,
+        "is_plottable_candidate": is_plottable_candidate,
     }
+
+
+def _should_include_product(product: dict[str, Any]) -> bool:
+    filename = product["productFilename"]
+    if not isinstance(filename, str):
+        return False
+
+    lower_filename = filename.lower()
+
+    # Exclude previews/metadata entirely.
+    if lower_filename.endswith((".jpg", ".jpeg", ".png", ".json", ".csv")):
+        return False
+
+    # Only FITS products are relevant to downstream analysis.
+    if not lower_filename.endswith(".fits"):
+        return False
+
+    calib_level = product["calib_level"]
+    return calib_level == 3
+
+
+def _classify_product(filename: str | None) -> tuple[str, bool]:
+    if not filename:
+        return ("other", False)
+
+    lower_filename = filename.lower()
+    if lower_filename.endswith("_s3d.fits"):
+        return ("cube3d", True)
+    if lower_filename.endswith("_x1d.fits"):
+        return ("spectrum1d", True)
+    return ("other", False)
 
 
 def _derive_product_id(obsid: str, filename: str | None) -> str:
