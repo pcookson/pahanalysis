@@ -3,11 +3,12 @@ SHELL := /bin/bash
 VENV_DIR := server/.venv
 VENV_PY := $(VENV_DIR)/bin/python
 VENV_PIP := $(VENV_DIR)/bin/pip
+VENV_UVICORN := $(VENV_DIR)/bin/uvicorn
 
 BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 3000
 
-.PHONY: setup dev clean
+.PHONY: setup dev backend clean
 
 setup:
 	@cd server && \
@@ -24,16 +25,22 @@ setup:
 		. .venv/bin/activate && \
 		pip install -r requirements.txt
 
-dev: $(VENV_PY)
+backend: $(VENV_UVICORN)
+	@cd server && ../$(VENV_UVICORN) app.main:app --reload --port $(BACKEND_PORT)
+
+dev: $(VENV_UVICORN) $(VENV_PY)
 	@mkdir -p .tmp
 	@echo "Starting backend on http://localhost:$(BACKEND_PORT) and frontend on http://localhost:$(FRONTEND_PORT)"
 	@echo "Press Ctrl+C to stop both processes"
 	@trap 'kill 0' INT TERM EXIT; \
-		(cd server && ../$(VENV_PY) -m http.server $(BACKEND_PORT)) & \
+		(cd server && ../$(VENV_UVICORN) app.main:app --reload --port $(BACKEND_PORT)) & \
 		(cd web && ../$(VENV_PY) -m http.server $(FRONTEND_PORT)) & \
 		wait
 
 $(VENV_PY):
+	@$(MAKE) setup
+
+$(VENV_UVICORN):
 	@$(MAKE) setup
 
 clean:
