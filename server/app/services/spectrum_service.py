@@ -34,6 +34,11 @@ class SpectrumNotCachedError(SpectrumServiceError):
     pass
 
 
+@dataclass
+class SpectrumNoTableFoundError(SpectrumServiceError):
+    available_hdus: list[dict[str, Any]]
+
+
 def read_cached_spectrum(product_id: str) -> dict[str, Any]:
     """Read a cached JWST x1d/c1d FITS file and return plot-ready arrays.
 
@@ -71,6 +76,9 @@ def _validate_supported_spectrum_product_id(product_id: str) -> str:
 
 def _parse_spectrum_fits(*, product_id: str, filename: str, path: Path) -> dict[str, Any]:
     with fits.open(path, memmap=False) as hdul:
+        segments: list[dict[str, Any]] = []
+        available_hdus = _describe_hdus(hdul)
+
         for index, hdu in enumerate(hdul):
             if hdu.data is None or not hasattr(hdu.data, "names"):
                 continue
@@ -95,26 +103,60 @@ def _parse_spectrum_fits(*, product_id: str, filename: str, path: Path) -> dict[
                 error_values=error_values,
             )
 
-            return {
-                "product_id": product_id,
-                "filename": filename,
-                "hdu": {
-                    "index": index,
-                    "name": hdu.name if getattr(hdu, "name", None) is not None else None,
-                },
-                "units": {
-                    "wavelength": _column_unit(hdu, wavelength_col),
-                    "flux": _column_unit(hdu, flux_col),
-                    "error": _column_unit(hdu, error_col) if error_col else None,
-                },
-                "data": {
-                    "wavelength": wavelength,
-                    "flux": flux,
-                    "error": error,
-                },
-            }
+            segments.append(
+                {
+                    "label": _segment_label(index=index, hdu_name=getattr(hdu, "name", None)),
+                    "hdu": {
+                        "index": index,
+                        "name": hdu.name if getattr(hdu, "name", None) is not None else None,
+                    },
+                    "units": {
+                        "wavelength": _column_unit(hdu, wavelength_col),
+                        "flux": _column_unit(hdu, flux_col),
+                        "error": _column_unit(hdu, error_col) if error_col else None,
+                    },
+                    "data": {
+                        "wavelength": wavelength,
+                        "flux": flux,
+                        "error": error,
+                    },
+                }
+            )
 
-    raise SpectrumServiceError("No spectrum table HDU found with wavelength and flux columns")
+        if not segments:
+            raise SpectrumNoTableFoundError(
+                "No wavelength/flux table found",
+                available_hdus=available_hdus,
+            )
+
+        return {
+            "product_id": product_id,
+            "filename": filename,
+            "segments": segments,
+        }
+
+
+def _describe_hdus(hdul: fits.HDUList) -> list[dict[str, Any]]:
+    described: list[dict[str, Any]] = []
+    for index, hdu in enumerate(hdul):
+        columns = None
+        if hdu.data is not None and hasattr(hdu.data, "names"):
+            columns = list(hdu.data.names or [])
+        described.append(
+            {
+                "index": index,
+                "name": getattr(hdu, "name", None),
+                "type": type(hdu).__name__,
+                "columns": columns,
+            }
+        )
+    return described
+
+
+def _segment_label(*, index: int, hdu_name: str | None) -> str:
+    if hdu_name:
+        return str(hdu_name)
+    return f"HDU {index}"
 
 
 def _match_column_name(column_names: list[str], candidates: list[str]) -> str | None:

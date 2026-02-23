@@ -12,6 +12,7 @@ from app.services.download_service import (
 )
 from app.services.spectrum_service import (
     InvalidSpectrumProductError,
+    SpectrumNoTableFoundError,
     SpectrumNotCachedError,
     SpectrumServiceError,
     read_cached_spectrum,
@@ -63,6 +64,15 @@ def get_product_spectrum(product_id: str = Query(...)) -> Any:
         return JSONResponse(
             status_code=404,
             content={"status": "error", "message": str(exc)},
+        )
+    except SpectrumNoTableFoundError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "error",
+                "message": str(exc),
+                "available_hdus": exc.available_hdus,
+            },
         )
     except SpectrumServiceError as exc:
         return JSONResponse(
