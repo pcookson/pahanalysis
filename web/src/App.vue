@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { ApiError, health, mastPing } from "./lib/api";
+import { ApiError, health, mastPing, searchObservations } from "./lib/api";
 
 const backendStatus = ref({
   state: "checking",
@@ -10,6 +10,17 @@ const mastStatus = ref({
   state: "checking",
   message: "",
 });
+const searchForm = ref({
+  target: "NGC 7027",
+  radiusArcsec: 30,
+});
+const searchState = ref({
+  loading: false,
+  error: "",
+  hasSearched: false,
+});
+const searchResults = ref([]);
+const selectedObservation = ref(null);
 
 const healthBadge = computed(() => badgeViewModel("health", backendStatus.value));
 const mastBadge = computed(() => badgeViewModel("mast", mastStatus.value));
@@ -71,6 +82,38 @@ async function refreshStatus() {
       message,
     };
   }
+}
+
+async function runSearch() {
+  searchState.value.loading = true;
+  searchState.value.error = "";
+  searchState.value.hasSearched = true;
+
+  try {
+    const results = await searchObservations(
+      searchForm.value.target,
+      searchForm.value.radiusArcsec,
+    );
+    searchResults.value = Array.isArray(results) ? results : [];
+    if (
+      selectedObservation.value &&
+      !searchResults.value.some((row) => row.obsid === selectedObservation.value.obsid)
+    ) {
+      selectedObservation.value = null;
+    }
+  } catch (error) {
+    searchResults.value = [];
+    searchState.value.error =
+      error instanceof ApiError || error instanceof Error
+        ? error.message
+        : "Search failed";
+  } finally {
+    searchState.value.loading = false;
+  }
+}
+
+function selectObservation(observation) {
+  selectedObservation.value = observation;
 }
 
 onMounted(() => {
@@ -168,7 +211,8 @@ onMounted(() => {
                   type="text"
                   placeholder="e.g. NGC 7027"
                   class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
-                  disabled
+                  v-model="searchForm.target"
+                  :disabled="searchState.loading"
                 />
               </div>
 
@@ -180,25 +224,99 @@ onMounted(() => {
                   type="number"
                   placeholder="30"
                   class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
-                  disabled
+                  v-model.number="searchForm.radiusArcsec"
+                  :disabled="searchState.loading"
+                  min="0.1"
+                  max="3600"
+                  step="0.1"
                 />
               </div>
 
               <button
                 type="button"
-                class="w-full rounded-xl border border-white/10 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled
+                class="w-full rounded-xl border border-cyan-200/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="searchState.loading"
+                @click="runSearch"
               >
-                Search (MVP wiring next)
+                {{ searchState.loading ? "Searching..." : "Search" }}
               </button>
             </div>
 
-            <div class="mt-6 rounded-xl border border-dashed border-white/10 bg-slate-950/30 p-4">
-              <p class="text-sm font-medium text-slate-200">Observation Results</p>
-              <p class="mt-2 text-sm leading-6 text-slate-400">
-                Results from <code class="rounded bg-white/10 px-1 py-0.5">GET /api/search</code>
-                will appear here with selectable observation rows.
+            <div class="mt-6 rounded-xl border border-white/10 bg-slate-950/30 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-sm font-medium text-slate-200">Observation Results</p>
+                <span
+                  v-if="searchState.hasSearched && !searchState.loading && !searchState.error"
+                  class="text-xs text-slate-400"
+                >
+                  {{ searchResults.length }} row<span v-if="searchResults.length !== 1">s</span>
+                </span>
+              </div>
+
+              <p
+                v-if="searchState.error"
+                class="mt-3 text-sm leading-6 text-rose-200"
+              >
+                {{ searchState.error }}
               </p>
+
+              <p
+                v-else-if="searchState.loading"
+                class="mt-3 text-sm leading-6 text-slate-300"
+              >
+                Searching JWST observations...
+              </p>
+
+              <p
+                v-else-if="searchState.hasSearched && searchResults.length === 0"
+                class="mt-3 text-sm leading-6 text-slate-300"
+              >
+                No JWST observations found.
+              </p>
+
+              <p
+                v-else-if="!searchState.hasSearched"
+                class="mt-3 text-sm leading-6 text-slate-400"
+              >
+                Search by target name using
+                <code class="rounded bg-white/10 px-1 py-0.5">GET /api/search</code>.
+              </p>
+
+              <div
+                v-else
+                class="mt-4 max-h-[26rem] overflow-auto rounded-lg border border-white/10"
+              >
+                <table class="min-w-full text-left text-sm">
+                  <thead class="sticky top-0 bg-slate-900/95 text-xs uppercase tracking-[0.12em] text-slate-400">
+                    <tr>
+                      <th class="px-3 py-2 font-medium">Target</th>
+                      <th class="px-3 py-2 font-medium">Instrument</th>
+                      <th class="px-3 py-2 font-medium">Obsid</th>
+                      <th class="px-3 py-2 font-medium">Proposal</th>
+                      <th class="px-3 py-2 font-medium">Rights</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="row in searchResults"
+                      :key="`${row.obsid}-${row.instrument_name || 'unknown'}`"
+                      class="cursor-pointer border-t border-white/5 text-slate-200 transition hover:bg-white/5"
+                      :class="
+                        selectedObservation?.obsid === row.obsid
+                          ? 'bg-cyan-300/10 ring-1 ring-inset ring-cyan-300/30'
+                          : ''
+                      "
+                      @click="selectObservation(row)"
+                    >
+                      <td class="px-3 py-2 align-top">{{ row.target_name || "—" }}</td>
+                      <td class="px-3 py-2 align-top">{{ row.instrument_name || "—" }}</td>
+                      <td class="px-3 py-2 align-top font-mono text-xs">{{ row.obsid || "—" }}</td>
+                      <td class="px-3 py-2 align-top">{{ row.proposal_id || "—" }}</td>
+                      <td class="px-3 py-2 align-top">{{ row.data_rights || "—" }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
@@ -237,6 +355,19 @@ onMounted(() => {
                   <code class="rounded bg-white/10 px-1 py-0.5">GET /api/obs/{obsid}/products</code>
                   will render here, including cache status metadata.
                 </p>
+                <div class="mt-3 rounded-lg border border-white/5 bg-white/5 p-3 text-sm text-slate-300">
+                  <p class="font-medium text-slate-200">Selected observation</p>
+                  <p v-if="selectedObservation" class="mt-2 leading-6">
+                    <span class="font-mono text-xs">{{ selectedObservation.obsid }}</span>
+                    · {{ selectedObservation.target_name || "Unknown target" }}
+                    <span v-if="selectedObservation.instrument_name">
+                      · {{ selectedObservation.instrument_name }}
+                    </span>
+                  </p>
+                  <p v-else class="mt-2 text-slate-400">
+                    Click a search result row to select an observation.
+                  </p>
+                </div>
               </div>
             </div>
 
