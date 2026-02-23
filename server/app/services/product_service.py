@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from astroquery.mast import Observations
+
+from app.config import settings
 
 
 @dataclass
@@ -41,6 +44,7 @@ def _normalize_product_row(obsid: str, row: Any) -> dict[str, Any]:
     derived_product_id = mast_product_id or _derive_product_id(obsid, filename)
 
     kind, is_plottable_candidate = _classify_product(filename)
+    cache_meta = _cache_metadata_for_filename(filename)
 
     return {
         "product_id": derived_product_id,
@@ -51,6 +55,9 @@ def _normalize_product_row(obsid: str, row: Any) -> dict[str, Any]:
         "description": _as_string_or_none(_get_value(row, "description")),
         "kind": kind,
         "is_plottable_candidate": is_plottable_candidate,
+        "is_cached": cache_meta["is_cached"],
+        "cached_path": cache_meta["cached_path"],
+        "cached_bytes": cache_meta["cached_bytes"],
     }
 
 
@@ -89,6 +96,38 @@ def _derive_product_id(obsid: str, filename: str | None) -> str:
     if filename:
         return f"{obsid}:{filename}"
     return f"{obsid}:unknown"
+
+
+def _cache_metadata_for_filename(filename: str | None) -> dict[str, Any]:
+    if not filename:
+        return {
+            "is_cached": False,
+            "cached_path": None,
+            "cached_bytes": None,
+        }
+
+    cache_path = Path(settings.jwst_cache_dir) / filename
+    if not cache_path.exists():
+        return {
+            "is_cached": False,
+            "cached_path": None,
+            "cached_bytes": None,
+        }
+
+    try:
+        cached_bytes = cache_path.stat().st_size
+    except OSError:
+        return {
+            "is_cached": False,
+            "cached_path": None,
+            "cached_bytes": None,
+        }
+
+    return {
+        "is_cached": True,
+        "cached_path": str(cache_path.resolve()),
+        "cached_bytes": cached_bytes,
+    }
 
 
 def _get_value(row: Any, *candidates: str) -> Any:
