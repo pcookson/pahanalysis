@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.mast import router as mast_router
+from app.api.routes.search import router as search_router
 
 app = FastAPI(title="JWST Spectrum Viewer API")
 
@@ -14,6 +15,7 @@ app.add_middleware(
 )
 
 app.include_router(mast_router, prefix="/api/mast", tags=["mast"])
+app.include_router(search_router, prefix="/api", tags=["search"])
 
 
 @app.get("/health")
