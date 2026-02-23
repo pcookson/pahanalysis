@@ -1,44 +1,80 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { ApiError, health, mastPing } from "./lib/api";
 
-const backendState = ref("checking");
-
-const statusLabel = computed(() => {
-  if (backendState.value === "connected") {
-    return "Connected";
-  }
-  if (backendState.value === "disconnected") {
-    return "Disconnected";
-  }
-  return "Checking";
+const backendStatus = ref({
+  state: "checking",
+  message: "",
+});
+const mastStatus = ref({
+  state: "checking",
+  message: "",
 });
 
-const badgeClass = computed(() => {
-  if (backendState.value === "connected") {
-    return "border-emerald-300/60 bg-emerald-400/15 text-emerald-100";
-  }
-  if (backendState.value === "disconnected") {
-    return "border-rose-300/60 bg-rose-400/15 text-rose-100";
-  }
-  return "border-slate-300/40 bg-slate-400/10 text-slate-100";
-});
+const healthBadge = computed(() => badgeViewModel("health", backendStatus.value));
+const mastBadge = computed(() => badgeViewModel("mast", mastStatus.value));
 
-async function checkBackend() {
+function badgeViewModel(kind, status) {
+  if (status.state === "ok") {
+    return {
+      label: kind === "health" ? "Connected" : "MAST ok",
+      classes: "border-emerald-300/60 bg-emerald-400/15 text-emerald-100",
+      dot: "bg-emerald-300",
+      title: status.message || "",
+    };
+  }
+  if (status.state === "error") {
+    return {
+      label: kind === "health" ? "Disconnected" : "MAST error",
+      classes: "border-rose-300/60 bg-rose-400/15 text-rose-100",
+      dot: "bg-rose-300",
+      title: status.message || "",
+    };
+  }
+  return {
+    label: kind === "health" ? "Checking" : "MAST checking",
+    classes: "border-slate-300/40 bg-slate-400/10 text-slate-100",
+    dot: "bg-slate-300",
+    title: "",
+  };
+}
+
+async function refreshStatus() {
   try {
-    const response = await fetch("http://localhost:8000/health");
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    const data = await health();
+    backendStatus.value = {
+      state: data?.status === "ok" ? "ok" : "error",
+      message: data?.status === "ok" ? "" : "Unexpected health response",
+    };
+  } catch (error) {
+    backendStatus.value = {
+      state: "error",
+      message: error instanceof Error ? error.message : "Backend not reachable on :8000",
+    };
+  }
 
-    const data = await response.json();
-    backendState.value = data?.status === "ok" ? "connected" : "disconnected";
-  } catch {
-    backendState.value = "disconnected";
+  try {
+    const data = await mastPing();
+    mastStatus.value = {
+      state: data?.status === "ok" ? "ok" : "error",
+      message: data?.status === "ok" ? "" : "Unexpected MAST ping response",
+    };
+  } catch (error) {
+    const message =
+      error instanceof ApiError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "MAST ping failed";
+    mastStatus.value = {
+      state: "error",
+      message,
+    };
   }
 }
 
 onMounted(() => {
-  checkBackend();
+  refreshStatus();
 });
 </script>
 
@@ -51,46 +87,181 @@ onMounted(() => {
         class="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_40%),radial-gradient(circle_at_85%_15%,rgba(34,197,94,0.16),transparent_42%),radial-gradient(circle_at_50%_90%,rgba(59,130,246,0.14),transparent_48%)]"
       />
 
-      <header class="relative mx-auto max-w-6xl px-6 pt-10">
-        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">
-          JWST Spectrum Viewer
-        </h1>
-      </header>
-
-      <main class="relative mx-auto grid min-h-[calc(100vh-6rem)] place-items-center px-6 py-10">
-        <section
-          class="w-full max-w-xl rounded-2xl border border-white/10 bg-white/5 p-6 shadow-panel backdrop-blur-xl sm:p-8"
+      <header class="relative mx-auto max-w-7xl px-6 pt-8 sm:pt-10">
+        <div
+          class="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 shadow-panel backdrop-blur-xl sm:px-6"
         >
-          <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p class="text-sm uppercase tracking-[0.16em] text-slate-300/90">
-                Backend Status
+              <p class="text-xs uppercase tracking-[0.18em] text-cyan-200/80">
+                PAH Analysis
               </p>
-              <p class="mt-2 text-lg font-medium text-white">
-                FastAPI @ :8000
-              </p>
+              <h1 class="mt-1 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+                PAH Analysis — JWST Viewer
+              </h1>
             </div>
 
-            <span
-              class="inline-flex items-center rounded-full border px-3 py-1 text-sm font-medium"
-              :class="badgeClass"
-            >
-              <span class="mr-2 inline-block h-2 w-2 rounded-full bg-current" />
-              {{ statusLabel }}
-            </span>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200 transition hover:bg-white/10"
+                @click="refreshStatus"
+              >
+                Refresh status
+              </button>
+
+              <span
+                class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium"
+                :class="healthBadge.classes"
+                :title="healthBadge.title"
+              >
+                <span class="h-2 w-2 rounded-full" :class="healthBadge.dot" />
+                {{ healthBadge.label }}
+              </span>
+
+              <span
+                class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium"
+                :class="mastBadge.classes"
+                :title="mastStatus.message || ''"
+              >
+                <span class="h-2 w-2 rounded-full" :class="mastBadge.dot" />
+                {{ mastBadge.label }}
+              </span>
+            </div>
           </div>
 
-          <p class="mt-5 text-sm leading-6 text-slate-300">
-            This frontend checks <code class="rounded bg-white/10 px-1 py-0.5">GET /health</code>
-            on load to confirm the backend is reachable.
-          </p>
-
           <p
-            v-if="backendState === 'disconnected'"
+            v-if="backendStatus.state === 'error'"
             class="mt-3 text-sm text-rose-200"
           >
-            Backend not reachable on :8000
+            {{ backendStatus.message || "Backend not reachable on :8000" }}
           </p>
+          <p
+            v-if="mastStatus.state === 'error'"
+            class="mt-2 text-sm text-amber-100/90"
+          >
+            MAST: {{ mastStatus.message }}
+          </p>
+        </div>
+      </header>
+
+      <main class="relative mx-auto max-w-7xl px-6 py-8 sm:py-10">
+        <section
+          class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]"
+        >
+          <div
+            class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="text-lg font-semibold text-white">Search & Results</h2>
+              <span class="text-xs uppercase tracking-[0.14em] text-slate-300">
+                Left panel
+              </span>
+            </div>
+
+            <div class="mt-5 space-y-4">
+              <div>
+                <label class="mb-2 block text-sm font-medium text-slate-200">
+                  Target Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. NGC 7027"
+                  class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
+                  disabled
+                />
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-slate-200">
+                  Radius (arcsec)
+                </label>
+                <input
+                  type="number"
+                  placeholder="30"
+                  class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
+                  disabled
+                />
+              </div>
+
+              <button
+                type="button"
+                class="w-full rounded-xl border border-white/10 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled
+              >
+                Search (MVP wiring next)
+              </button>
+            </div>
+
+            <div class="mt-6 rounded-xl border border-dashed border-white/10 bg-slate-950/30 p-4">
+              <p class="text-sm font-medium text-slate-200">Observation Results</p>
+              <p class="mt-2 text-sm leading-6 text-slate-400">
+                Results from <code class="rounded bg-white/10 px-1 py-0.5">GET /api/search</code>
+                will appear here with selectable observation rows.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid gap-6">
+            <div
+              class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <h2 class="text-lg font-semibold text-white">Products & Actions</h2>
+                <span class="text-xs uppercase tracking-[0.14em] text-slate-300">
+                  Right panel
+                </span>
+              </div>
+
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled
+                >
+                  List Products
+                </button>
+                <button
+                  type="button"
+                  class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled
+                >
+                  Download Selected
+                </button>
+              </div>
+
+              <div class="mt-5 rounded-xl border border-dashed border-white/10 bg-slate-950/30 p-4">
+                <p class="text-sm font-medium text-slate-200">Product List</p>
+                <p class="mt-2 text-sm leading-6 text-slate-400">
+                  Filtered JWST products from
+                  <code class="rounded bg-white/10 px-1 py-0.5">GET /api/obs/{obsid}/products</code>
+                  will render here, including cache status metadata.
+                </p>
+              </div>
+            </div>
+
+            <div
+              class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
+            >
+              <h2 class="text-lg font-semibold text-white">Plot Area</h2>
+              <p class="mt-3 text-sm leading-6 text-slate-400">
+                Spectrum segments from
+                <code class="rounded bg-white/10 px-1 py-0.5">GET /api/products/spectrum</code>
+                will be plotted here in the MVP flow.
+              </p>
+
+              <div
+                class="mt-4 grid min-h-52 place-items-center rounded-xl border border-dashed border-cyan-200/15 bg-gradient-to-br from-cyan-400/5 via-transparent to-emerald-300/5"
+              >
+                <div class="text-center">
+                  <p class="text-sm font-medium text-slate-200">Plot placeholder</p>
+                  <p class="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                    Awaiting selected x1d/c1d product
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
       </main>
     </div>
