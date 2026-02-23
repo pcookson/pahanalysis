@@ -1,6 +1,14 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
-import { ApiError, health, listProducts, mastPing, searchObservations } from "./lib/api";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  ApiError,
+  downloadProduct,
+  fetchSpectrum,
+  health,
+  listProducts,
+  mastPing,
+  searchObservations,
+} from "./lib/api";
 
 const backendStatus = ref({
   state: "checking",
@@ -26,6 +34,17 @@ const productsState = ref({
   error: "",
 });
 const products = ref([]);
+const productDownloads = ref({});
+const plotState = ref({
+  loading: false,
+  error: "",
+  productId: "",
+  filename: "",
+  segmentCount: 0,
+});
+const productPlots = ref({});
+const plotContainerEl = ref(null);
+let plotlyModulePromise = null;
 
 const healthBadge = computed(() => badgeViewModel("health", backendStatus.value));
 const mastBadge = computed(() => badgeViewModel("mast", mastStatus.value));
@@ -125,9 +144,12 @@ async function loadProductsForObservation(observation) {
   if (!observation?.obsid) {
     products.value = [];
     productsState.value = { loading: false, error: "" };
+    clearPlot();
     return;
   }
 
+  products.value = [];
+  clearPlot();
   productsState.value = { loading: true, error: "" };
   try {
     const rows = await listProducts(observation.obsid);
@@ -147,6 +169,206 @@ async function loadProductsForObservation(observation) {
   productsState.value = { loading: false, error: "" };
 }
 
+async function handleDownloadProduct(product) {
+  if (!product?.product_id || !selectedObservation.value) {
+    return;
+  }
+
+  const productId = product.product_id;
+  productDownloads.value = {
+    ...productDownloads.value,
+    [productId]: {
+      loading: true,
+      error: "",
+    },
+  };
+
+  try {
+    await downloadProduct(productId);
+    await loadProductsForObservation(selectedObservation.value);
+  } catch (error) {
+    const message =
+      error instanceof ApiError
+        ? error.status === 403 && error.data?.requires_auth
+          ? "This product is not public yet (exclusive access)."
+          : error.message
+        : error instanceof Error
+          ? error.message
+          : "Download failed";
+
+    productDownloads.value = {
+      ...productDownloads.value,
+      [productId]: {
+        loading: false,
+        error: message,
+      },
+    };
+    return;
+  }
+
+  productDownloads.value = {
+    ...productDownloads.value,
+    [productId]: {
+      loading: false,
+      error: "",
+    },
+  };
+}
+
+function downloadStateFor(productId) {
+  return productDownloads.value[productId] ?? { loading: false, error: "" };
+}
+
+function plotActionStateFor(productId) {
+  return productPlots.value[productId] ?? { loading: false, error: "" };
+}
+
+async function handlePlotProduct(product) {
+  if (!product?.product_id) {
+    return;
+  }
+
+  const productId = product.product_id;
+  productPlots.value = {
+    ...productPlots.value,
+    [productId]: { loading: true, error: "" },
+  };
+  plotState.value = {
+    ...plotState.value,
+    loading: true,
+    error: "",
+    productId,
+    filename: product.productFilename || "",
+    segmentCount: 0,
+  };
+
+  try {
+    const spectrum = await fetchSpectrum(productId);
+    await renderSpectrumPlot(spectrum);
+    plotState.value = {
+      loading: false,
+      error: "",
+      productId,
+      filename: spectrum?.filename || product.productFilename || "",
+      segmentCount: Array.isArray(spectrum?.segments) ? spectrum.segments.length : 0,
+    };
+    productPlots.value = {
+      ...productPlots.value,
+      [productId]: { loading: false, error: "" },
+    };
+  } catch (error) {
+    let message = "Failed to load spectrum";
+    if (error instanceof ApiError) {
+      if (error.status === 404) {
+        message = "Please download the file first.";
+      } else if (error.status === 422) {
+        const hduHint = Array.isArray(error.data?.available_hdus)
+          ? ` Available HDUs: ${error.data.available_hdus
+              .map((hdu) => `${hdu.index}:${hdu.name || hdu.type}`)
+              .join(", ")}`
+          : "";
+        message = `Spectrum table not found.${hduHint}`.trim();
+      } else {
+        message = error.message;
+      }
+    } else if (error instanceof Error) {
+      message = error.message;
+    }
+
+    plotState.value = {
+      ...plotState.value,
+      loading: false,
+      error: message,
+      productId,
+      filename: product.productFilename || "",
+      segmentCount: 0,
+    };
+    productPlots.value = {
+      ...productPlots.value,
+      [productId]: { loading: false, error: message },
+    };
+  }
+}
+
+async function getPlotly() {
+  if (!plotlyModulePromise) {
+    plotlyModulePromise = import("plotly.js-dist-min");
+  }
+  const mod = await plotlyModulePromise;
+  return mod.default ?? mod;
+}
+
+async function renderSpectrumPlot(spectrum) {
+  await nextTick();
+  if (!plotContainerEl.value) {
+    throw new Error("Plot container not ready");
+  }
+
+  const Plotly = await getPlotly();
+  const segments = Array.isArray(spectrum?.segments) ? spectrum.segments : [];
+
+  const traces = segments.map((segment, index) => ({
+    x: segment?.data?.wavelength ?? [],
+    y: segment?.data?.flux ?? [],
+    type: "scattergl",
+    mode: "lines",
+    name: segment?.label || `Segment ${index + 1}`,
+    line: { width: 1.5 },
+  }));
+
+  const firstSegment = segments[0] ?? null;
+  const wavelengthUnit = firstSegment?.units?.wavelength || null;
+  const fluxUnit = firstSegment?.units?.flux || null;
+
+  await Plotly.react(
+    plotContainerEl.value,
+    traces,
+    {
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(2,6,23,0.35)",
+      margin: { t: 36, r: 18, b: 56, l: 64 },
+      font: { color: "#dbeafe" },
+      xaxis: {
+        title: wavelengthUnit ? `Wavelength (${wavelengthUnit})` : "Wavelength",
+        gridcolor: "rgba(148,163,184,0.16)",
+        zeroline: false,
+      },
+      yaxis: {
+        title: fluxUnit ? `Flux (${fluxUnit})` : "Flux",
+        gridcolor: "rgba(148,163,184,0.16)",
+        zeroline: false,
+      },
+      legend: {
+        orientation: "h",
+        y: 1.18,
+        x: 0,
+        bgcolor: "rgba(0,0,0,0)",
+      },
+    },
+    {
+      displaylogo: false,
+      responsive: true,
+    },
+  );
+}
+
+async function clearPlot() {
+  plotState.value = {
+    loading: false,
+    error: "",
+    productId: "",
+    filename: "",
+    segmentCount: 0,
+  };
+  if (!plotContainerEl.value) return;
+  try {
+    const Plotly = await getPlotly();
+    Plotly.purge(plotContainerEl.value);
+  } catch {
+    // Ignore cleanup errors (e.g. dependency not installed yet).
+  }
+}
+
 function formatBytes(bytes) {
   if (bytes === null || bytes === undefined || Number.isNaN(Number(bytes))) {
     return "—";
@@ -163,12 +385,33 @@ function formatBytes(bytes) {
   return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
 }
 
+function dataRightsBadgeClass(value) {
+  const rights = String(value || "").toUpperCase();
+  if (rights === "PUBLIC") {
+    return "border-emerald-300/40 bg-emerald-300/10 text-emerald-100";
+  }
+  if (!rights) {
+    return "border-white/10 bg-white/5 text-slate-300";
+  }
+  return "border-amber-300/40 bg-amber-300/10 text-amber-100";
+}
+
 watch(
   () => selectedObservation.value,
   (observation) => {
     loadProductsForObservation(observation);
   },
 );
+
+onBeforeUnmount(async () => {
+  if (!plotContainerEl.value) return;
+  try {
+    const Plotly = await getPlotly();
+    Plotly.purge(plotContainerEl.value);
+  } catch {
+    // no-op
+  }
+});
 
 onMounted(() => {
   refreshStatus();
@@ -366,7 +609,14 @@ onMounted(() => {
                       <td class="px-3 py-2 align-top">{{ row.instrument_name || "—" }}</td>
                       <td class="px-3 py-2 align-top font-mono text-xs">{{ row.obsid || "—" }}</td>
                       <td class="px-3 py-2 align-top">{{ row.proposal_id || "—" }}</td>
-                      <td class="px-3 py-2 align-top">{{ row.data_rights || "—" }}</td>
+                      <td class="px-3 py-2 align-top">
+                        <span
+                          class="inline-flex rounded-full border px-2 py-0.5 text-xs"
+                          :class="dataRightsBadgeClass(row.data_rights)"
+                        >
+                          {{ row.data_rights || "—" }}
+                        </span>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -378,11 +628,46 @@ onMounted(() => {
             <div
               class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
             >
-              <div class="flex items-center justify-between gap-3">
-                <h2 class="text-lg font-semibold text-white">Products & Actions</h2>
-                <span class="text-xs uppercase tracking-[0.14em] text-slate-300">
-                  Right panel
-                </span>
+              <div class="flex flex-col gap-3">
+                <div class="flex items-center justify-between gap-3">
+                  <h2 class="text-lg font-semibold text-white">Products & Actions</h2>
+                  <span class="text-xs uppercase tracking-[0.14em] text-slate-300">
+                    Right panel
+                  </span>
+                </div>
+                <div class="rounded-lg border border-white/10 bg-slate-950/40 p-3 text-sm">
+                  <p class="font-medium text-slate-200">Selected observation</p>
+                  <div v-if="selectedObservation" class="mt-2 grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Target</p>
+                      <p class="text-slate-200">{{ selectedObservation.target_name || "—" }}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Instrument</p>
+                      <p class="text-slate-200">{{ selectedObservation.instrument_name || "—" }}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Obsid</p>
+                      <p class="font-mono text-xs text-slate-200">{{ selectedObservation.obsid || "—" }}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Proposal</p>
+                      <p class="text-slate-200">{{ selectedObservation.proposal_id || "—" }}</p>
+                    </div>
+                    <div class="sm:col-span-2">
+                      <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Data Rights</p>
+                      <span
+                        class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs"
+                        :class="dataRightsBadgeClass(selectedObservation.data_rights)"
+                      >
+                        {{ selectedObservation.data_rights || "Unknown" }}
+                      </span>
+                    </div>
+                  </div>
+                  <p v-else class="mt-2 text-slate-400">
+                    Click a search result row to select an observation.
+                  </p>
+                </div>
               </div>
 
               <div class="mt-4 grid gap-3 sm:grid-cols-2">
@@ -409,20 +694,6 @@ onMounted(() => {
                   <code class="rounded bg-white/10 px-1 py-0.5">GET /api/obs/{obsid}/products</code>
                   load automatically when an observation is selected.
                 </p>
-                <div class="mt-3 rounded-lg border border-white/5 bg-white/5 p-3 text-sm text-slate-300">
-                  <p class="font-medium text-slate-200">Selected observation</p>
-                  <p v-if="selectedObservation" class="mt-2 leading-6">
-                    <span class="font-mono text-xs">{{ selectedObservation.obsid }}</span>
-                    · {{ selectedObservation.target_name || "Unknown target" }}
-                    <span v-if="selectedObservation.instrument_name">
-                      · {{ selectedObservation.instrument_name }}
-                    </span>
-                  </p>
-                  <p v-else class="mt-2 text-slate-400">
-                    Click a search result row to select an observation.
-                  </p>
-                </div>
-
                 <div class="mt-4 rounded-lg border border-white/10 bg-slate-950/40 p-3">
                   <p
                     v-if="!selectedObservation"
@@ -520,24 +791,49 @@ onMounted(() => {
                               <button
                                 type="button"
                                 class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-                                :disabled="false"
+                                :disabled="downloadStateFor(product.product_id).loading"
                                 :title="product.product_id"
+                                @click="handleDownloadProduct(product)"
                               >
-                                {{ product.is_cached ? "Re-download" : "Download" }}
+                                {{
+                                  downloadStateFor(product.product_id).loading
+                                    ? "Downloading..."
+                                    : product.is_cached
+                                      ? "Re-download"
+                                      : "Download"
+                                }}
                               </button>
                               <button
                                 type="button"
                                 class="rounded-lg border border-cyan-200/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                :disabled="!product.is_plottable_candidate"
+                                v-if="product.kind === 'spectrum1d' && product.is_cached"
+                                :disabled="plotActionStateFor(product.product_id).loading"
                                 :title="
-                                  product.is_plottable_candidate
-                                    ? (product.is_cached ? 'Ready to plot after wiring action' : 'Download required before plotting')
-                                    : 'Not plottable'
+                                  plotActionStateFor(product.product_id).loading
+                                    ? 'Loading spectrum...'
+                                    : 'Plot cached spectrum'
                                 "
+                                @click="handlePlotProduct(product)"
                               >
-                                Plot
+                                {{
+                                  plotActionStateFor(product.product_id).loading
+                                    ? "Plotting..."
+                                    : "Plot"
+                                }}
                               </button>
                             </div>
+                            <p
+                              v-if="downloadStateFor(product.product_id).error"
+                              class="mt-2 text-xs text-rose-200"
+                            >
+                              {{ downloadStateFor(product.product_id).error }}
+                            </p>
+                            <p
+                              v-if="plotActionStateFor(product.product_id).error"
+                              class="mt-2 text-xs text-rose-200"
+                            >
+                              {{ plotActionStateFor(product.product_id).error }}
+                            </p>
                           </td>
                         </tr>
                       </tbody>
@@ -554,18 +850,38 @@ onMounted(() => {
               <p class="mt-3 text-sm leading-6 text-slate-400">
                 Spectrum segments from
                 <code class="rounded bg-white/10 px-1 py-0.5">GET /api/products/spectrum</code>
-                will be plotted here in the MVP flow.
+                are plotted here for cached `x1d/c1d` products.
               </p>
+              <div class="mt-4 rounded-lg border border-white/10 bg-slate-950/40 p-3">
+                <p v-if="plotState.loading" class="text-sm text-slate-300">
+                  Loading spectrum for plotting...
+                </p>
+                <p v-else-if="plotState.error" class="text-sm text-rose-200">
+                  {{ plotState.error }}
+                </p>
+                <p
+                  v-else-if="plotState.productId"
+                  class="text-sm text-slate-300"
+                >
+                  {{ plotState.filename || plotState.productId }}
+                  <span class="text-slate-500"> · {{ plotState.segmentCount }} segment<span v-if="plotState.segmentCount !== 1">s</span></span>
+                </p>
+                <p v-else class="text-sm text-slate-400">
+                  Click Plot on a cached `spectrum1d` product to render the spectrum.
+                </p>
+              </div>
 
               <div
-                class="mt-4 grid min-h-52 place-items-center rounded-xl border border-dashed border-cyan-200/15 bg-gradient-to-br from-cyan-400/5 via-transparent to-emerald-300/5"
+                class="mt-4 overflow-hidden rounded-xl border border-dashed border-cyan-200/15 bg-gradient-to-br from-cyan-400/5 via-transparent to-emerald-300/5"
               >
-                <div class="text-center">
-                  <p class="text-sm font-medium text-slate-200">Plot placeholder</p>
-                  <p class="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
-                    Awaiting selected x1d/c1d product
-                  </p>
-                </div>
+                <div
+                  ref="plotContainerEl"
+                  class="min-h-72 w-full"
+                />
+                <div
+                  v-if="!plotState.productId && !plotState.loading && !plotState.error"
+                  class="pointer-events-none absolute"
+                />
               </div>
             </div>
           </div>
