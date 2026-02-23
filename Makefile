@@ -6,9 +6,9 @@ VENV_PIP := $(VENV_DIR)/bin/pip
 VENV_UVICORN := $(VENV_DIR)/bin/uvicorn
 
 BACKEND_PORT ?= 8000
-FRONTEND_PORT ?= 3000
+FRONTEND_PORT ?= 5173
 
-.PHONY: setup dev backend clean
+.PHONY: setup dev backend frontend clean
 
 setup:
 	@cd server && \
@@ -28,13 +28,16 @@ setup:
 backend: $(VENV_UVICORN)
 	@cd server && ../$(VENV_UVICORN) app.main:app --reload --port $(BACKEND_PORT)
 
+frontend:
+	@cd web && npm run dev
+
 dev: $(VENV_UVICORN) $(VENV_PY)
 	@mkdir -p .tmp
 	@echo "Starting backend on http://localhost:$(BACKEND_PORT) and frontend on http://localhost:$(FRONTEND_PORT)"
 	@echo "Press Ctrl+C to stop both processes"
 	@trap 'kill 0' INT TERM EXIT; \
 		(cd server && ../$(VENV_UVICORN) app.main:app --reload --port $(BACKEND_PORT)) & \
-		(cd web && ../$(VENV_PY) -m http.server $(FRONTEND_PORT)) & \
+		(cd web && npm run dev -- --host 0.0.0.0 --port $(FRONTEND_PORT)) & \
 		wait
 
 $(VENV_PY):
