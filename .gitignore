@@ -6,6 +6,7 @@ __pycache__/
 node_modules/
 dist/
 .env
+data/
 mast/tok
 250916221-products.json
 spectrumtest.json

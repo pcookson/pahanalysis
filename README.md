@@ -40,6 +40,28 @@ pip install -r requirements.txt
 - `make dev` - Start backend and frontend dev servers (uses the backend venv Python)
 - `make clean` - Remove virtualenv, caches, and optional frontend artifacts
 
+## Docker (Easy Share / Deploy Path)
+
+This repo now includes a simple Docker Compose setup:
+
+- `server` service: FastAPI backend
+- `web` service: static frontend served by Nginx, with `/api` proxied to the backend
+- `./data` volume mount: reserved for persistent app data (including a future SQLite DB)
+
+Run it:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:8080`.
+
+Notes:
+
+- Future SQLite path is already reserved via `SQLITE_DB_PATH=/data/app.db`
+- JWST cache is configured to persist under `/data/jwst-cache`
+- Frontend API calls now support `VITE_API_BASE_URL` and default to same-origin (works behind the Nginx proxy)
+
 ## Notes
 
 - `make dev` serves a simple static placeholder from `web/` until the frontend toolchain is added.

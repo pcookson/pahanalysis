@@ -5,12 +5,13 @@ from app.api.routes.mast import router as mast_router
 from app.api.routes.obs import router as obs_router
 from app.api.routes.products import router as products_router
 from app.api.routes.search import router as search_router
+from app.config import settings
 
 app = FastAPI(title="JWST Spectrum Viewer API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=list(settings.cors_allow_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
