@@ -4,6 +4,10 @@ import { computed } from "vue";
 import { dataRightsBadgeClass } from "../lib/ui";
 
 const props = defineProps({
+  activeTab: {
+    type: String,
+    required: true,
+  },
   searchForm: {
     type: Object,
     required: true,
@@ -20,16 +24,34 @@ const props = defineProps({
     type: Object,
     required: true,
   },
+  cachedQueryOptions: {
+    type: Array,
+    required: true,
+  },
+  selectedCachedQueryKey: {
+    type: String,
+    default: "",
+  },
+  cachedSelectionMeta: {
+    type: Object,
+    required: true,
+  },
   selectedObservation: {
     type: Object,
     default: null,
   },
 });
 
-defineEmits(["run-search", "refetch-search", "select-observation"]);
+defineEmits([
+  "set-active-tab",
+  "run-search",
+  "refetch-search",
+  "select-cached-query",
+  "select-observation",
+]);
 
 const formattedLastFetched = computed(() => {
-  const raw = props.searchCacheMeta?.lastFetchedAt;
+  const raw = props.cachedSelectionMeta?.lastFetchedAt;
   if (!raw) return null;
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return raw;
@@ -49,67 +71,129 @@ const formattedLastFetched = computed(() => {
     </div>
 
     <div class="mt-5 space-y-4">
-      <div>
-        <label class="mb-2 block text-sm font-medium text-slate-200">
-          Target Name
-        </label>
-        <input
-          v-model="searchForm.target"
-          type="text"
-          placeholder="e.g. NGC 7027"
-          class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
-          :disabled="searchState.loading"
-        />
-      </div>
-
-      <div>
-        <label class="mb-2 block text-sm font-medium text-slate-200">
-          Radius (arcsec)
-        </label>
-        <input
-          v-model.number="searchForm.radiusArcsec"
-          type="number"
-          placeholder="30"
-          class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
-          :disabled="searchState.loading"
-          min="0.1"
-          max="3600"
-          step="0.1"
-        />
-      </div>
-
-      <div class="grid gap-2 sm:grid-cols-2">
+      <div class="inline-flex rounded-xl border border-white/10 bg-slate-950/40 p-1">
         <button
           type="button"
-          class="rounded-xl border border-cyan-200/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+          class="rounded-lg px-3 py-1.5 text-sm transition"
+          :class="
+            activeTab === 'search'
+              ? 'bg-cyan-400/15 text-cyan-100'
+              : 'text-slate-300 hover:bg-white/5'
+          "
+          @click="$emit('set-active-tab', 'search')"
+        >
+          Search
+        </button>
+        <button
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-sm transition"
+          :class="
+            activeTab === 'cached'
+              ? 'bg-cyan-400/15 text-cyan-100'
+              : 'text-slate-300 hover:bg-white/5'
+          "
+          @click="$emit('set-active-tab', 'cached')"
+        >
+          Cached
+        </button>
+      </div>
+
+      <template v-if="activeTab === 'search'">
+        <div>
+          <label class="mb-2 block text-sm font-medium text-slate-200">
+            Target Name
+          </label>
+          <input
+            v-model="searchForm.target"
+            type="text"
+            placeholder="e.g. NGC 7027"
+            class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
+            :disabled="searchState.loading"
+          />
+        </div>
+
+        <div>
+          <label class="mb-2 block text-sm font-medium text-slate-200">
+            Radius (arcsec)
+          </label>
+          <input
+            v-model.number="searchForm.radiusArcsec"
+            type="number"
+            placeholder="30"
+            class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/60 focus:outline-none"
+            :disabled="searchState.loading"
+            min="0.1"
+            max="3600"
+            step="0.1"
+          />
+        </div>
+
+        <button
+          type="button"
+          class="w-full rounded-xl border border-cyan-200/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
           :disabled="searchState.loading"
           @click="$emit('run-search')"
         >
           {{ searchState.loading ? "Searching..." : "Search" }}
         </button>
+
+        <p
+          v-if="searchCacheMeta?.hasCache"
+          class="text-xs text-slate-500"
+        >
+          Current query is cached ({{ searchCacheMeta.rowCount }} row<span v-if="searchCacheMeta.rowCount !== 1">s</span>).
+        </p>
+      </template>
+
+      <template v-else>
+        <div>
+          <label class="mb-2 block text-sm font-medium text-slate-200">
+            Cached Target
+          </label>
+          <select
+            class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-sm text-white focus:border-cyan-300/60 focus:outline-none"
+            :value="selectedCachedQueryKey"
+            :disabled="searchState.loading || cachedQueryOptions.length === 0"
+            @change="$emit('select-cached-query', $event.target.value)"
+          >
+            <option value="">
+              {{ cachedQueryOptions.length ? "Select cached target..." : "No cached targets" }}
+            </option>
+            <option
+              v-for="option in cachedQueryOptions"
+              :key="option.key"
+              :value="option.key"
+            >
+              {{ option.target }} (r={{ option.radiusArcsec ?? "?" }})
+            </option>
+          </select>
+        </div>
+
         <button
           type="button"
-          class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-          :disabled="searchState.loading"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="searchState.loading || !selectedCachedQueryKey"
           @click="$emit('refetch-search')"
         >
-          Re-fetch
+          {{ searchState.loading ? "Fetching..." : "Re-fetch" }}
         </button>
-      </div>
 
-      <p class="text-xs text-slate-400">
-        Last time data fetched:
-        <span v-if="formattedLastFetched" class="text-slate-200">
-          {{ formattedLastFetched }}
-        </span>
-        <span v-else class="text-slate-500">Not fetched yet</span>
-      </p>
-      <p
-        v-if="searchCacheMeta?.hasCache"
-        class="text-xs text-slate-500"
-      >
-        Cached for current query ({{ searchCacheMeta.rowCount }} row<span v-if="searchCacheMeta.rowCount !== 1">s</span>)
-      </p>
+        <p class="text-xs text-slate-400">
+          Last time data fetched:
+          <span v-if="formattedLastFetched" class="text-slate-200">
+            {{ formattedLastFetched }}
+          </span>
+          <span v-else class="text-slate-500">Not fetched yet</span>
+        </p>
+        <p class="text-xs text-slate-500">
+          <template v-if="cachedSelectionMeta?.hasSelection">
+            Cached rows: {{ cachedSelectionMeta.rowCount }}
+          </template>
+          <template v-else>
+            Select a cached target to view cached observation results.
+          </template>
+        </p>
+      </template>
     </div>
 
     <div class="mt-6 rounded-xl border border-white/10 bg-slate-950/30 p-4">
@@ -122,6 +206,13 @@ const formattedLastFetched = computed(() => {
           {{ searchResults.length }} row<span v-if="searchResults.length !== 1">s</span>
         </span>
       </div>
+
+      <p
+        v-if="activeTab === 'cached' && !selectedCachedQueryKey"
+        class="mt-3 text-sm leading-6 text-slate-400"
+      >
+        Select a cached target to view cached observation results.
+      </p>
 
       <p
         v-if="searchState.error"

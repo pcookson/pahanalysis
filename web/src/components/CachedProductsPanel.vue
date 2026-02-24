@@ -82,6 +82,7 @@ function scoreBadgeClass(grade) {
         <table class="min-w-full text-left text-sm">
           <thead class="sticky top-0 bg-slate-900/95 text-xs uppercase tracking-[0.12em] text-slate-400">
             <tr>
+              <th class="px-3 py-2 font-medium">Target</th>
               <th class="px-3 py-2 font-medium">Filename</th>
               <th class="px-3 py-2 font-medium">Kind</th>
               <th class="px-3 py-2 font-medium">Size</th>
@@ -95,6 +96,11 @@ function scoreBadgeClass(grade) {
               :key="product.product_id"
               class="border-t border-white/5 text-slate-200"
             >
+              <td class="px-3 py-2 align-top">
+                <p class="max-w-[18rem] truncate text-xs" :title="product.target_name || 'N/A'">
+                  {{ product.target_name || "N/A" }}
+                </p>
+              </td>
               <td class="px-3 py-2 align-top">
                 <p class="max-w-[40rem] truncate font-mono text-xs" :title="product.productFilename || ''">
                   {{ product.productFilename || "—" }}
@@ -193,4 +199,3 @@ function scoreBadgeClass(grade) {
     </div>
   </div>
 </template>
-

@@ -143,23 +143,6 @@ function scoreBadgeClass(grade) {
       </div>
     </div>
 
-    <div class="mt-4 grid gap-3 sm:grid-cols-2">
-      <button
-        type="button"
-        class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled
-      >
-        {{ selectedObservation ? "Auto-loading products" : "Select observation" }}
-      </button>
-      <button
-        type="button"
-        class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled
-      >
-        Download Selected
-      </button>
-    </div>
-
     <div class="mt-5 rounded-xl border border-dashed border-white/10 bg-slate-950/30 p-4">
       <p class="text-sm font-medium text-slate-200">Product List</p>
       <p class="mt-2 text-sm leading-6 text-slate-400">

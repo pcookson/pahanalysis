@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from astropy.io import fits
+
 from app.config import settings
 from app.services.download_service import JWST_PRODUCT_PREFIX
 
@@ -37,6 +39,7 @@ def list_cached_products() -> list[dict[str, Any]]:
         rows.append(
             {
                 "product_id": f"{JWST_PRODUCT_PREFIX}{filename}",
+                "target_name": _read_target_name(path) if filename.lower().endswith(".fits") else None,
                 "productFilename": filename,
                 "kind": kind,
                 "is_plottable_candidate": is_plottable_candidate,
@@ -62,3 +65,21 @@ def _classify_product(filename: str | None) -> tuple[str, bool]:
         return ("spectrum1d", True)
     return ("other", False)
 
+
+def _read_target_name(path: Path) -> str | None:
+    try:
+        with fits.open(path, memmap=False) as hdul:
+            for hdu in hdul:
+                header = getattr(hdu, "header", None)
+                if header is None:
+                    continue
+                for key in ("TARGNAME", "TARGET", "OBJECT"):
+                    value = header.get(key)
+                    if value is None:
+                        continue
+                    text = str(value).strip()
+                    if text:
+                        return text
+    except Exception:
+        return None
+    return None

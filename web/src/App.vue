@@ -40,6 +40,8 @@ const searchState = ref({
 });
 const searchResults = ref([]);
 const observationSearchCache = ref({});
+const leftPanelTab = ref("search");
+const selectedCachedQueryKey = ref("");
 const selectedObservation = ref(null);
 const productsState = ref({
   loading: false,
@@ -105,6 +107,37 @@ const searchCacheMeta = computed(() => {
   };
 });
 
+const cachedQueryOptions = computed(() => {
+  const entries = Object.entries(observationSearchCache.value ?? {});
+  return entries
+    .map(([key, entry]) => {
+      const query = normalizeSearchQuery(entry?.query, key);
+      if (!query?.target) return null;
+      return {
+        key,
+        target: query.target,
+        radiusArcsec: query.radiusArcsec,
+        fetchedAt: entry?.fetchedAt ?? null,
+        rowCount: Array.isArray(entry?.results) ? entry.results.length : 0,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.fetchedAt || "").localeCompare(String(a.fetchedAt || "")));
+});
+
+const cachedSelectionMeta = computed(() => {
+  const key = selectedCachedQueryKey.value;
+  if (!key) {
+    return { hasSelection: false, lastFetchedAt: null, rowCount: 0 };
+  }
+  const entry = observationSearchCache.value[key] ?? null;
+  return {
+    hasSelection: Boolean(entry),
+    lastFetchedAt: entry?.fetchedAt ?? null,
+    rowCount: Array.isArray(entry?.results) ? entry.results.length : 0,
+  };
+});
+
 watch(
   observationSearchCache,
   (cache) => {
@@ -161,6 +194,55 @@ function searchCacheKey(form) {
   return JSON.stringify({ target, radius });
 }
 
+function parseSearchCacheKey(key) {
+  try {
+    const parsed = JSON.parse(String(key));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const target = typeof parsed.target === "string" ? parsed.target : "";
+    const radiusRaw = parsed.radius;
+    const radiusValue = Number(radiusRaw);
+    return {
+      target: target.trim(),
+      radiusArcsec: Number.isFinite(radiusValue) ? radiusValue : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSearchQuery(query, key) {
+  if (query && typeof query === "object" && !Array.isArray(query)) {
+    const target = String(query.target ?? "").trim();
+    const radiusRaw = Number(query.radiusArcsec);
+    return {
+      target,
+      radiusArcsec: Number.isFinite(radiusRaw) ? radiusRaw : null,
+    };
+  }
+  return parseSearchCacheKey(key);
+}
+
+function normalizeObservationSearchCache(cache) {
+  if (!cache || typeof cache !== "object" || Array.isArray(cache)) {
+    return {};
+  }
+
+  const normalized = {};
+  for (const [key, entry] of Object.entries(cache)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const query = normalizeSearchQuery(entry.query, key);
+    normalized[key] = {
+      query,
+      results: Array.isArray(entry.results) ? entry.results : [],
+      fetchedAt:
+        typeof entry.fetchedAt === "string" && entry.fetchedAt.trim()
+          ? entry.fetchedAt
+          : null,
+    };
+  }
+  return normalized;
+}
+
 function applySearchResults(results) {
   searchResults.value = Array.isArray(results) ? results : [];
   if (
@@ -172,8 +254,18 @@ function applySearchResults(results) {
 }
 
 async function runSearch(options = {}) {
+  return runSearchForQuery(
+    {
+      target: searchForm.value.target,
+      radiusArcsec: searchForm.value.radiusArcsec,
+    },
+    options,
+  );
+}
+
+async function runSearchForQuery(query, options = {}) {
   const force = options.force === true;
-  const cacheKey = searchCacheKey(searchForm.value);
+  const cacheKey = searchCacheKey(query);
   const cached = observationSearchCache.value[cacheKey];
 
   if (!force && cached) {
@@ -184,6 +276,7 @@ async function runSearch(options = {}) {
       hasSearched: true,
     };
     applySearchResults(cached.results);
+    selectedCachedQueryKey.value = cacheKey;
     return;
   }
 
@@ -193,18 +286,23 @@ async function runSearch(options = {}) {
 
   try {
     const results = await searchObservations(
-      searchForm.value.target,
-      searchForm.value.radiusArcsec,
+      query.target,
+      query.radiusArcsec,
     );
     const normalizedResults = Array.isArray(results) ? results : [];
     observationSearchCache.value = {
       ...observationSearchCache.value,
       [cacheKey]: {
+        query: {
+          target: String(query.target ?? "").trim(),
+          radiusArcsec: Number(query.radiusArcsec),
+        },
         results: normalizedResults,
         fetchedAt: new Date().toISOString(),
       },
     };
     applySearchResults(normalizedResults);
+    selectedCachedQueryKey.value = cacheKey;
   } catch (error) {
     searchResults.value = [];
     searchState.value.error =
@@ -218,6 +316,41 @@ async function runSearch(options = {}) {
 
 function refetchSearch() {
   return runSearch({ force: true });
+}
+
+function setLeftPanelTab(tab) {
+  leftPanelTab.value = tab === "cached" ? "cached" : "search";
+}
+
+function selectCachedQuery(key) {
+  selectedCachedQueryKey.value = key;
+  const entry = observationSearchCache.value[key];
+  if (!entry) return;
+
+  const query = normalizeSearchQuery(entry.query, key);
+  if (query?.target) {
+    searchForm.value = {
+      target: query.target,
+      radiusArcsec: query.radiusArcsec ?? searchForm.value.radiusArcsec,
+    };
+  }
+
+  searchState.value = {
+    ...searchState.value,
+    loading: false,
+    error: "",
+    hasSearched: true,
+  };
+  applySearchResults(entry.results);
+}
+
+function refetchCachedSearch() {
+  const key = selectedCachedQueryKey.value;
+  const entry = observationSearchCache.value[key];
+  if (!entry) return;
+  const query = normalizeSearchQuery(entry.query, key);
+  if (!query?.target) return;
+  return runSearchForQuery(query, { force: true });
 }
 
 function selectObservation(observation) {
@@ -763,7 +896,7 @@ onMounted(() => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        observationSearchCache.value = parsed;
+        observationSearchCache.value = normalizeObservationSearchCache(parsed);
       }
     }
   } catch {
@@ -795,13 +928,19 @@ onMounted(() => {
             class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:items-stretch"
           >
           <SearchPanel
+            :active-tab="leftPanelTab"
             :search-form="searchForm"
             :search-state="searchState"
             :search-results="searchResults"
             :search-cache-meta="searchCacheMeta"
+            :cached-query-options="cachedQueryOptions"
+            :selected-cached-query-key="selectedCachedQueryKey"
+            :cached-selection-meta="cachedSelectionMeta"
             :selected-observation="selectedObservation"
+            @set-active-tab="setLeftPanelTab"
             @run-search="runSearch"
-            @refetch-search="refetchSearch"
+            @refetch-search="refetchCachedSearch"
+            @select-cached-query="selectCachedQuery"
             @select-observation="selectObservation"
           />
 
