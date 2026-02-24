@@ -13,6 +13,10 @@ from app.services.download_service import (
     ProductAuthRequiredError,
     download_product,
 )
+from app.services.cache_catalog_service import (
+    CacheCatalogServiceError,
+    list_cached_products,
+)
 from app.services.spectrum_service import (
     InvalidSpectrumProductError,
     SpectrumNoTableFoundError,
@@ -155,3 +159,14 @@ def put_product_annotation(payload: ProductAnnotationRequest) -> Any:
         user_confidence=payload.user_confidence,
         note=payload.note,
     )
+
+
+@router.get("/products/cached", response_model=None)
+def get_cached_products() -> Any:
+    try:
+        return list_cached_products()
+    except CacheCatalogServiceError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "message": str(exc)},
+        )

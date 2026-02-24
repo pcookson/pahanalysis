@@ -66,6 +66,10 @@ export function listProducts(obsid) {
   return request(`/api/obs/${encodeURIComponent(obsid)}/products`);
 }
 
+export function listCachedProducts() {
+  return request("/api/products/cached");
+}
+
 export function downloadProduct(product_id) {
   return request("/api/products/download", {
     method: "POST",
@@ -103,6 +107,7 @@ export const api = {
   mastPing,
   searchObservations,
   listProducts,
+  listCachedProducts,
   downloadProduct,
   fetchSpectrum,
   getPahScore,

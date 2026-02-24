@@ -7,15 +7,19 @@ import {
   getPahScore,
   getProductAnnotation,
   health,
+  listCachedProducts,
   listProducts,
   mastPing,
   putProductAnnotation,
   searchObservations,
 } from "./lib/api";
+import CachedProductsPanel from "./components/CachedProductsPanel.vue";
 import PlotPanel from "./components/PlotPanel.vue";
 import ProductsPanel from "./components/ProductsPanel.vue";
 import SearchPanel from "./components/SearchPanel.vue";
 import StatusHeader from "./components/StatusHeader.vue";
+
+const OBS_SEARCH_CACHE_STORAGE_KEY = "pah-analysis:observation-search-cache:v1";
 
 const backendStatus = ref({
   state: "checking",
@@ -35,12 +39,18 @@ const searchState = ref({
   hasSearched: false,
 });
 const searchResults = ref([]);
+const observationSearchCache = ref({});
 const selectedObservation = ref(null);
 const productsState = ref({
   loading: false,
   error: "",
 });
 const products = ref([]);
+const cachedProductsState = ref({
+  loading: false,
+  error: "",
+});
+const cachedProducts = ref([]);
 const productDownloads = ref({});
 const productScores = ref({});
 const productAnnotations = ref({});
@@ -73,6 +83,42 @@ const displayedProducts = computed(() => {
 
   return filtered;
 });
+
+const displayedCachedProducts = computed(() => {
+  const rows = Array.isArray(cachedProducts.value) ? [...cachedProducts.value] : [];
+  rows.sort((a, b) => {
+    const diff = scoreConfidenceFor(b) - scoreConfidenceFor(a);
+    if (diff !== 0) return diff;
+    return String(a.productFilename || "").localeCompare(String(b.productFilename || ""));
+  });
+  return rows;
+});
+
+const searchCacheMeta = computed(() => {
+  const key = searchCacheKey(searchForm.value);
+  const entry = observationSearchCache.value[key] ?? null;
+  return {
+    key,
+    hasCache: Boolean(entry),
+    lastFetchedAt: entry?.fetchedAt ?? null,
+    rowCount: Array.isArray(entry?.results) ? entry.results.length : 0,
+  };
+});
+
+watch(
+  observationSearchCache,
+  (cache) => {
+    try {
+      localStorage.setItem(
+        OBS_SEARCH_CACHE_STORAGE_KEY,
+        JSON.stringify(cache ?? {}),
+      );
+    } catch {
+      // Ignore storage quota/private mode failures.
+    }
+  },
+  { deep: true },
+);
 
 async function refreshStatus() {
   try {
@@ -108,7 +154,39 @@ async function refreshStatus() {
   }
 }
 
-async function runSearch() {
+function searchCacheKey(form) {
+  const target = String(form?.target ?? "").trim().toLowerCase();
+  const radiusValue = Number(form?.radiusArcsec);
+  const radius = Number.isFinite(radiusValue) ? radiusValue : "";
+  return JSON.stringify({ target, radius });
+}
+
+function applySearchResults(results) {
+  searchResults.value = Array.isArray(results) ? results : [];
+  if (
+    selectedObservation.value &&
+    !searchResults.value.some((row) => row.obsid === selectedObservation.value.obsid)
+  ) {
+    selectedObservation.value = null;
+  }
+}
+
+async function runSearch(options = {}) {
+  const force = options.force === true;
+  const cacheKey = searchCacheKey(searchForm.value);
+  const cached = observationSearchCache.value[cacheKey];
+
+  if (!force && cached) {
+    searchState.value = {
+      ...searchState.value,
+      loading: false,
+      error: "",
+      hasSearched: true,
+    };
+    applySearchResults(cached.results);
+    return;
+  }
+
   searchState.value.loading = true;
   searchState.value.error = "";
   searchState.value.hasSearched = true;
@@ -118,13 +196,15 @@ async function runSearch() {
       searchForm.value.target,
       searchForm.value.radiusArcsec,
     );
-    searchResults.value = Array.isArray(results) ? results : [];
-    if (
-      selectedObservation.value &&
-      !searchResults.value.some((row) => row.obsid === selectedObservation.value.obsid)
-    ) {
-      selectedObservation.value = null;
-    }
+    const normalizedResults = Array.isArray(results) ? results : [];
+    observationSearchCache.value = {
+      ...observationSearchCache.value,
+      [cacheKey]: {
+        results: normalizedResults,
+        fetchedAt: new Date().toISOString(),
+      },
+    };
+    applySearchResults(normalizedResults);
   } catch (error) {
     searchResults.value = [];
     searchState.value.error =
@@ -134,6 +214,10 @@ async function runSearch() {
   } finally {
     searchState.value.loading = false;
   }
+}
+
+function refetchSearch() {
+  return runSearch({ force: true });
 }
 
 function selectObservation(observation) {
@@ -169,6 +253,30 @@ async function loadProductsForObservation(observation) {
   }
 
   productsState.value = { loading: false, error: "" };
+}
+
+async function loadCachedProductsCatalog() {
+  cachedProductsState.value = {
+    ...cachedProductsState.value,
+    loading: true,
+    error: "",
+  };
+
+  try {
+    const rows = await listCachedProducts();
+    cachedProducts.value = Array.isArray(rows) ? rows : [];
+    seedAnnotationDrafts(cachedProducts.value);
+    preloadPahMetadata(cachedProducts.value);
+    cachedProductsState.value = { loading: false, error: "" };
+  } catch (error) {
+    cachedProductsState.value = {
+      loading: false,
+      error:
+        error instanceof ApiError || error instanceof Error
+          ? error.message
+          : "Failed to load cached products",
+    };
+  }
 }
 
 function isSpectrum1dProduct(product) {
@@ -438,7 +546,7 @@ function updateOnlyLikelyPah(value) {
 }
 
 async function handleDownloadProduct(product) {
-  if (!product?.product_id || !selectedObservation.value) {
+  if (!product?.product_id) {
     return;
   }
 
@@ -453,7 +561,10 @@ async function handleDownloadProduct(product) {
 
   try {
     await downloadProduct(productId);
-    await loadProductsForObservation(selectedObservation.value);
+    if (selectedObservation.value) {
+      await loadProductsForObservation(selectedObservation.value);
+    }
+    await loadCachedProductsCatalog();
   } catch (error) {
     const message =
       error instanceof ApiError
@@ -647,7 +758,19 @@ onBeforeUnmount(async () => {
 });
 
 onMounted(() => {
+  try {
+    const raw = localStorage.getItem(OBS_SEARCH_CACHE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        observationSearchCache.value = parsed;
+      }
+    }
+  } catch {
+    // Ignore malformed or unavailable localStorage.
+  }
   refreshStatus();
+  loadCachedProductsCatalog();
 });
 </script>
 
@@ -666,20 +789,22 @@ onMounted(() => {
         @refresh-status="refreshStatus"
       />
 
-      <main class="relative mx-auto max-w-7xl px-6 py-8 sm:py-10">
-        <section
-          class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]"
-        >
+      <main class="relative mx-auto w-full max-w-[1800px] px-6 py-8 sm:py-10">
+        <section class="grid gap-6">
+          <div
+            class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:items-stretch"
+          >
           <SearchPanel
             :search-form="searchForm"
             :search-state="searchState"
             :search-results="searchResults"
+            :search-cache-meta="searchCacheMeta"
             :selected-observation="selectedObservation"
             @run-search="runSearch"
+            @refetch-search="refetchSearch"
             @select-observation="selectObservation"
           />
 
-          <div class="grid gap-6">
             <ProductsPanel
               :selected-observation="selectedObservation"
               :products-state="productsState"
@@ -698,18 +823,30 @@ onMounted(() => {
               @save-annotation="handleSaveAnnotation"
               @update-only-likely-pah="updateOnlyLikelyPah"
             />
-
-            <PlotPanel :plot-state="plotState">
-              <div
-                ref="plotContainerEl"
-                class="min-h-72 w-full"
-              />
-              <div
-                v-if="!plotState.productId && !plotState.loading && !plotState.error"
-                class="pointer-events-none absolute"
-              />
-            </PlotPanel>
           </div>
+
+          <PlotPanel :plot-state="plotState">
+            <div
+              ref="plotContainerEl"
+              class="min-h-72 w-full"
+            />
+            <div
+              v-if="!plotState.productId && !plotState.loading && !plotState.error"
+              class="pointer-events-none absolute"
+            />
+          </PlotPanel>
+
+          <CachedProductsPanel
+            :cached-products-state="cachedProductsState"
+            :cached-products="displayedCachedProducts"
+            :product-downloads="productDownloads"
+            :product-plots="productPlots"
+            :product-scores="productScores"
+            @refresh="loadCachedProductsCatalog"
+            @download-product="handleDownloadProduct"
+            @plot-product="handlePlotProduct"
+            @score-product="handleScoreProduct"
+          />
         </section>
       </main>
     </div>

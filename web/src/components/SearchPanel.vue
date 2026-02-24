@@ -1,7 +1,9 @@
 <script setup>
+import { computed } from "vue";
+
 import { dataRightsBadgeClass } from "../lib/ui";
 
-defineProps({
+const props = defineProps({
   searchForm: {
     type: Object,
     required: true,
@@ -14,18 +16,30 @@ defineProps({
     type: Array,
     required: true,
   },
+  searchCacheMeta: {
+    type: Object,
+    required: true,
+  },
   selectedObservation: {
     type: Object,
     default: null,
   },
 });
 
-defineEmits(["run-search", "select-observation"]);
+defineEmits(["run-search", "refetch-search", "select-observation"]);
+
+const formattedLastFetched = computed(() => {
+  const raw = props.searchCacheMeta?.lastFetchedAt;
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleString();
+});
 </script>
 
 <template>
   <div
-    class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
+    class="h-full rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
   >
     <div class="flex items-center justify-between gap-3">
       <h2 class="text-lg font-semibold text-white">Search & Results</h2>
@@ -64,14 +78,38 @@ defineEmits(["run-search", "select-observation"]);
         />
       </div>
 
-      <button
-        type="button"
-        class="w-full rounded-xl border border-cyan-200/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
-        :disabled="searchState.loading"
-        @click="$emit('run-search')"
+      <div class="grid gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          class="rounded-xl border border-cyan-200/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="searchState.loading"
+          @click="$emit('run-search')"
+        >
+          {{ searchState.loading ? "Searching..." : "Search" }}
+        </button>
+        <button
+          type="button"
+          class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="searchState.loading"
+          @click="$emit('refetch-search')"
+        >
+          Re-fetch
+        </button>
+      </div>
+
+      <p class="text-xs text-slate-400">
+        Last time data fetched:
+        <span v-if="formattedLastFetched" class="text-slate-200">
+          {{ formattedLastFetched }}
+        </span>
+        <span v-else class="text-slate-500">Not fetched yet</span>
+      </p>
+      <p
+        v-if="searchCacheMeta?.hasCache"
+        class="text-xs text-slate-500"
       >
-        {{ searchState.loading ? "Searching..." : "Search" }}
-      </button>
+        Cached for current query ({{ searchCacheMeta.rowCount }} row<span v-if="searchCacheMeta.rowCount !== 1">s</span>)
+      </p>
     </div>
 
     <div class="mt-6 rounded-xl border border-white/10 bg-slate-950/30 p-4">
@@ -159,4 +197,3 @@ defineEmits(["run-search", "select-observation"]);
     </div>
   </div>
 </template>
-

@@ -99,7 +99,7 @@ function scoreBadgeClass(grade) {
 
 <template>
   <div
-    class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
+    class="h-full rounded-2xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur-xl sm:p-6"
   >
     <div class="flex flex-col gap-3">
       <div class="flex items-center justify-between gap-3">

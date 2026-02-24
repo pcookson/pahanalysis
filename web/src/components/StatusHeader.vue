@@ -21,7 +21,7 @@ const mastBadge = computed(() => badgeViewModel("mast", props.mastStatus));
 </script>
 
 <template>
-  <header class="relative mx-auto max-w-7xl px-6 pt-8 sm:pt-10">
+  <header class="relative mx-auto w-full max-w-[1800px] px-6 pt-8 sm:pt-10">
     <div
       class="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 shadow-panel backdrop-blur-xl sm:px-6"
     >
@@ -79,4 +79,3 @@ const mastBadge = computed(() => badgeViewModel("mast", props.mastStatus));
     </div>
   </header>
 </template>
-
