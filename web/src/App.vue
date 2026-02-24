@@ -1,12 +1,15 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ApiError,
   downloadProduct,
   fetchSpectrum,
+  getPahScore,
+  getProductAnnotation,
   health,
   listProducts,
   mastPing,
+  putProductAnnotation,
   searchObservations,
 } from "./lib/api";
 import PlotPanel from "./components/PlotPanel.vue";
@@ -39,6 +42,12 @@ const productsState = ref({
 });
 const products = ref([]);
 const productDownloads = ref({});
+const productScores = ref({});
+const productAnnotations = ref({});
+const annotationDrafts = ref({});
+const productListOptions = ref({
+  onlyLikelyPah: false,
+});
 const plotState = ref({
   loading: false,
   error: "",
@@ -49,6 +58,21 @@ const plotState = ref({
 const productPlots = ref({});
 const plotContainerEl = ref(null);
 let plotlyModulePromise = null;
+
+const displayedProducts = computed(() => {
+  const rows = Array.isArray(products.value) ? [...products.value] : [];
+  const filtered = productListOptions.value.onlyLikelyPah
+    ? rows.filter((product) => isLikelyPahProduct(product))
+    : rows;
+
+  filtered.sort((a, b) => {
+    const diff = scoreConfidenceFor(b) - scoreConfidenceFor(a);
+    if (diff !== 0) return diff;
+    return String(a.productFilename || "").localeCompare(String(b.productFilename || ""));
+  });
+
+  return filtered;
+});
 
 async function refreshStatus() {
   try {
@@ -130,6 +154,8 @@ async function loadProductsForObservation(observation) {
   try {
     const rows = await listProducts(observation.obsid);
     products.value = Array.isArray(rows) ? rows : [];
+    seedAnnotationDrafts(products.value);
+    preloadPahMetadata(products.value);
   } catch (error) {
     products.value = [];
     productsState.value = {
@@ -143,6 +169,272 @@ async function loadProductsForObservation(observation) {
   }
 
   productsState.value = { loading: false, error: "" };
+}
+
+function isSpectrum1dProduct(product) {
+  return product?.kind === "spectrum1d";
+}
+
+function isScorableProduct(product) {
+  return isSpectrum1dProduct(product) && Boolean(product?.is_cached);
+}
+
+function scoreStateFor(productId) {
+  return (
+    productScores.value[productId] ?? {
+      loading: false,
+      error: "",
+      data: null,
+    }
+  );
+}
+
+function annotationStateFor(productId) {
+  return (
+    productAnnotations.value[productId] ?? {
+      loading: false,
+      saving: false,
+      error: "",
+      data: null,
+    }
+  );
+}
+
+function annotationDraftFor(productId) {
+  return (
+    annotationDrafts.value[productId] ?? {
+      user_label: "unknown",
+      user_confidence: null,
+      note: "",
+    }
+  );
+}
+
+function seedAnnotationDrafts(rows) {
+  const next = { ...annotationDrafts.value };
+  for (const product of rows || []) {
+    if (!product?.product_id || !isSpectrum1dProduct(product)) continue;
+    if (!next[product.product_id]) {
+      next[product.product_id] = {
+        user_label: "unknown",
+        user_confidence: null,
+        note: "",
+      };
+    }
+  }
+  annotationDrafts.value = next;
+}
+
+async function preloadPahMetadata(rows) {
+  const spectrumRows = (rows || []).filter((row) => isSpectrum1dProduct(row));
+  for (const product of spectrumRows) {
+    void loadAnnotation(product.product_id);
+    if (isScorableProduct(product)) {
+      void loadPahScore(product, { silentIfMissing: true });
+    }
+  }
+}
+
+async function loadPahScore(product, options = {}) {
+  const productId = product?.product_id;
+  if (!productId) return null;
+
+  const current = scoreStateFor(productId);
+  productScores.value = {
+    ...productScores.value,
+    [productId]: {
+      ...current,
+      loading: true,
+      error: "",
+    },
+  };
+
+  try {
+    const data = await getPahScore(productId, { force: options.force === true });
+    productScores.value = {
+      ...productScores.value,
+      [productId]: {
+        loading: false,
+        error: "",
+        data,
+      },
+    };
+    return data;
+  } catch (error) {
+    let message = error instanceof ApiError || error instanceof Error ? error.message : "Scoring failed";
+    if (options.silentIfMissing && error instanceof ApiError && error.status === 404) {
+      message = "";
+    }
+    productScores.value = {
+      ...productScores.value,
+      [productId]: {
+        loading: false,
+        error: message,
+        data: current?.data ?? null,
+      },
+    };
+    return null;
+  }
+}
+
+async function loadAnnotation(productId) {
+  if (!productId) return null;
+
+  const current = annotationStateFor(productId);
+  productAnnotations.value = {
+    ...productAnnotations.value,
+    [productId]: {
+      ...current,
+      loading: true,
+      error: "",
+    },
+  };
+
+  try {
+    const data = await getProductAnnotation(productId);
+    productAnnotations.value = {
+      ...productAnnotations.value,
+      [productId]: {
+        loading: false,
+        saving: false,
+        error: "",
+        data,
+      },
+    };
+    if (data) {
+      annotationDrafts.value = {
+        ...annotationDrafts.value,
+        [productId]: {
+          user_label: data.user_label ?? "unknown",
+          user_confidence:
+            typeof data.user_confidence === "number" ? data.user_confidence : null,
+          note: data.note ?? "",
+        },
+      };
+    }
+    return data;
+  } catch (error) {
+    productAnnotations.value = {
+      ...productAnnotations.value,
+      [productId]: {
+        loading: false,
+        saving: false,
+        error: error instanceof ApiError || error instanceof Error ? error.message : "Failed to load annotation",
+        data: current?.data ?? null,
+      },
+    };
+    return null;
+  }
+}
+
+function handleScoreProduct(product) {
+  if (!product?.product_id) return;
+  loadPahScore(product, { force: false });
+}
+
+function updateAnnotationDraft(productId, patch) {
+  if (!productId) return;
+  const current = annotationDraftFor(productId);
+  const nextLabel = patch.user_label ?? current.user_label;
+  const next = {
+    ...current,
+    ...patch,
+  };
+  if (nextLabel === "unknown") {
+    next.user_confidence = null;
+  } else if (
+    patch.user_label &&
+    current.user_label === "unknown" &&
+    (current.user_confidence === null || current.user_confidence === undefined)
+  ) {
+    next.user_confidence = 0.5;
+  }
+  annotationDrafts.value = {
+    ...annotationDrafts.value,
+    [productId]: next,
+  };
+}
+
+async function handleSaveAnnotation(product) {
+  const productId = product?.product_id;
+  if (!productId) return;
+  const draft = annotationDraftFor(productId);
+  const current = annotationStateFor(productId);
+
+  productAnnotations.value = {
+    ...productAnnotations.value,
+    [productId]: {
+      ...current,
+      saving: true,
+      error: "",
+    },
+  };
+
+  try {
+    const payload = {
+      product_id: productId,
+      user_label: draft.user_label,
+      user_confidence:
+        draft.user_label === "unknown"
+          ? null
+          : draft.user_confidence === null || draft.user_confidence === ""
+            ? null
+            : Number(draft.user_confidence),
+      note: draft.note?.trim() ? draft.note.trim() : null,
+    };
+    const data = await putProductAnnotation(payload);
+    productAnnotations.value = {
+      ...productAnnotations.value,
+      [productId]: {
+        loading: false,
+        saving: false,
+        error: "",
+        data,
+      },
+    };
+    annotationDrafts.value = {
+      ...annotationDrafts.value,
+      [productId]: {
+        user_label: data.user_label ?? "unknown",
+        user_confidence:
+          typeof data.user_confidence === "number" ? data.user_confidence : null,
+        note: data.note ?? "",
+      },
+    };
+  } catch (error) {
+    productAnnotations.value = {
+      ...productAnnotations.value,
+      [productId]: {
+        ...current,
+        saving: false,
+        error:
+          error instanceof ApiError || error instanceof Error
+            ? error.message
+            : "Failed to save annotation",
+      },
+    };
+  }
+}
+
+function scoreConfidenceFor(product) {
+  const data = scoreStateFor(product?.product_id).data;
+  return typeof data?.confidence === "number" ? data.confidence : -1;
+}
+
+function isLikelyPahProduct(product) {
+  if (!isSpectrum1dProduct(product)) return false;
+  const annotation = annotationStateFor(product.product_id).data;
+  if (annotation?.user_label === "yes") {
+    return true;
+  }
+  return scoreConfidenceFor(product) >= 0.6;
+}
+
+function updateOnlyLikelyPah(value) {
+  productListOptions.value = {
+    ...productListOptions.value,
+    onlyLikelyPah: Boolean(value),
+  };
 }
 
 async function handleDownloadProduct(product) {
@@ -392,10 +684,19 @@ onMounted(() => {
               :selected-observation="selectedObservation"
               :products-state="productsState"
               :products="products"
+              :displayed-products="displayedProducts"
               :product-downloads="productDownloads"
               :product-plots="productPlots"
+              :product-scores="productScores"
+              :product-annotations="productAnnotations"
+              :annotation-drafts="annotationDrafts"
+              :product-list-options="productListOptions"
               @download-product="handleDownloadProduct"
               @plot-product="handlePlotProduct"
+              @score-product="handleScoreProduct"
+              @update-annotation-draft="updateAnnotationDraft"
+              @save-annotation="handleSaveAnnotation"
+              @update-only-likely-pah="updateOnlyLikelyPah"
             />
 
             <PlotPanel :plot-state="plotState">

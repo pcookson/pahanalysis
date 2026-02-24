@@ -78,6 +78,26 @@ export function fetchSpectrum(product_id) {
   return request(`/api/products/spectrum?${params.toString()}`);
 }
 
+export function getPahScore(product_id, options = {}) {
+  const params = new URLSearchParams({ product_id });
+  if (options.force) {
+    params.set("force", "true");
+  }
+  return request(`/api/products/pah_score?${params.toString()}`);
+}
+
+export function getProductAnnotation(product_id) {
+  const params = new URLSearchParams({ product_id });
+  return request(`/api/products/annotation?${params.toString()}`);
+}
+
+export function putProductAnnotation(payload) {
+  return request("/api/products/annotation", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export const api = {
   health,
   mastPing,
@@ -85,4 +105,7 @@ export const api = {
   listProducts,
   downloadProduct,
   fetchSpectrum,
+  getPahScore,
+  getProductAnnotation,
+  putProductAnnotation,
 };
