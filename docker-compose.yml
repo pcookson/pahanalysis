@@ -1,0 +1,25 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      CORS_ALLOW_ORIGINS: http://localhost:8080,http://localhost:5173
+      JWST_CACHE_DIR: /data/jwst-cache
+      SQLITE_DB_PATH: /data/app.db
+    volumes:
+      - ./data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    depends_on:
+      - server
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
