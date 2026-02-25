@@ -95,6 +95,9 @@ function scoreBadgeClass(grade) {
   }
   return "border-rose-300/40 bg-rose-300/10 text-rose-100";
 }
+
+const coverageTooltipText =
+  "Nominal instrument coverage; actual product coverage may differ.";
 </script>
 
 <template>
@@ -118,6 +121,23 @@ function scoreBadgeClass(grade) {
           <div>
             <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Instrument</p>
             <p class="text-slate-200">{{ selectedObservation.instrument_name || "—" }}</p>
+            <div
+              v-if="selectedObservation.instrumentCoverageLabel"
+              class="mt-1 flex flex-wrap items-center gap-1.5"
+            >
+              <span
+                class="inline-flex rounded-full border border-cyan-200/20 bg-cyan-400/10 px-2 py-0.5 text-xs text-cyan-100"
+              >
+                {{ selectedObservation.instrumentCoverageLabel }}
+              </span>
+              <span
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-white/15 text-[10px] text-slate-300"
+                :title="coverageTooltipText"
+                :aria-label="coverageTooltipText"
+              >
+                ?
+              </span>
+            </div>
           </div>
           <div>
             <p class="text-xs uppercase tracking-[0.12em] text-slate-400">Obsid</p>

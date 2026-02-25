@@ -6,6 +6,8 @@ from typing import Any
 import astropy.units as u
 from astroquery.mast import Observations
 
+from app.services.instrument_coverage import get_nominal_instrument_coverage
+
 
 @dataclass
 class SearchServiceError(Exception):
@@ -56,16 +58,21 @@ def _is_jwst_row(row: Any) -> bool:
 def _normalize_row(row: Any) -> dict[str, Any]:
     obsid_value = _get_value(row, "obsid", "obs_id")
     target_name_value = _get_value(row, "target_name")
+    instrument_name = _as_string_or_none(_get_value(row, "instrument_name"))
+    nominal_coverage = get_nominal_instrument_coverage(instrument_name)
 
     return {
         "obsid": _as_required_string(obsid_value),
         "target_name": _as_required_string(target_name_value),
         "s_ra": _as_float_or_none(_get_value(row, "s_ra", "ra")),
         "s_dec": _as_float_or_none(_get_value(row, "s_dec", "dec")),
-        "instrument_name": _as_string_or_none(_get_value(row, "instrument_name")),
+        "instrument_name": instrument_name,
         "t_min": _as_float_or_none(_get_value(row, "t_min")),
         "proposal_id": _as_string_or_none(_get_value(row, "proposal_id", "proposalId")),
         "data_rights": _as_string_or_none(_get_value(row, "data_rights", "dataRights")),
+        "waveNominalMinUm": nominal_coverage["waveNominalMinUm"],
+        "waveNominalMaxUm": nominal_coverage["waveNominalMaxUm"],
+        "instrumentCoverageLabel": nominal_coverage["instrumentCoverageLabel"],
     }
 
 

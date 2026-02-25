@@ -222,6 +222,75 @@ function normalizeSearchQuery(query, key) {
   return parseSearchCacheKey(key);
 }
 
+function normalizeInstrumentToken(value) {
+  if (value == null) return "";
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function nominalCoverageFromInstrument(instrumentName) {
+  const token = normalizeInstrumentToken(instrumentName);
+  if (!token || token.includes("FGS")) {
+    return {
+      waveNominalMinUm: null,
+      waveNominalMaxUm: null,
+      instrumentCoverageLabel: null,
+    };
+  }
+
+  if (token.includes("MIRI")) {
+    return {
+      waveNominalMinUm: 4.9,
+      waveNominalMaxUm: 28.9,
+      instrumentCoverageLabel: "MIRI — mid IR (4.9–28.9 µm)",
+    };
+  }
+  if (token.includes("NIRSPEC")) {
+    return {
+      waveNominalMinUm: 0.6,
+      waveNominalMaxUm: 5.3,
+      instrumentCoverageLabel: "NIRSpec — near IR (0.6–5.3 µm)",
+    };
+  }
+  if (token.includes("NIRCAM")) {
+    return {
+      waveNominalMinUm: 0.6,
+      waveNominalMaxUm: 5.0,
+      instrumentCoverageLabel: "NIRCam — near IR (0.6–5.0 µm)",
+    };
+  }
+  if (token.includes("NIRISS")) {
+    return {
+      waveNominalMinUm: 0.8,
+      waveNominalMaxUm: 5.0,
+      instrumentCoverageLabel: "NIRISS — near IR (0.8–5.0 µm)",
+    };
+  }
+
+  return {
+    waveNominalMinUm: null,
+    waveNominalMaxUm: null,
+    instrumentCoverageLabel: null,
+  };
+}
+
+function enrichObservationNominalCoverage(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+
+  const hasAllFields =
+    Object.prototype.hasOwnProperty.call(row, "waveNominalMinUm") &&
+    Object.prototype.hasOwnProperty.call(row, "waveNominalMaxUm") &&
+    Object.prototype.hasOwnProperty.call(row, "instrumentCoverageLabel");
+  if (hasAllFields) return row;
+
+  return {
+    ...row,
+    ...nominalCoverageFromInstrument(row.instrument_name),
+  };
+}
+
 function normalizeObservationSearchCache(cache) {
   if (!cache || typeof cache !== "object" || Array.isArray(cache)) {
     return {};
@@ -233,7 +302,9 @@ function normalizeObservationSearchCache(cache) {
     const query = normalizeSearchQuery(entry.query, key);
     normalized[key] = {
       query,
-      results: Array.isArray(entry.results) ? entry.results : [],
+      results: Array.isArray(entry.results)
+        ? entry.results.map((row) => enrichObservationNominalCoverage(row))
+        : [],
       fetchedAt:
         typeof entry.fetchedAt === "string" && entry.fetchedAt.trim()
           ? entry.fetchedAt
@@ -244,7 +315,9 @@ function normalizeObservationSearchCache(cache) {
 }
 
 function applySearchResults(results) {
-  searchResults.value = Array.isArray(results) ? results : [];
+  searchResults.value = Array.isArray(results)
+    ? results.map((row) => enrichObservationNominalCoverage(row))
+    : [];
   if (
     selectedObservation.value &&
     !searchResults.value.some((row) => row.obsid === selectedObservation.value.obsid)
@@ -693,7 +766,9 @@ async function handleDownloadProduct(product) {
   };
 
   try {
-    await downloadProduct(productId);
+    await downloadProduct(productId, {
+      target_name: selectedObservation.value?.target_name || product.target_name || null,
+    });
     if (selectedObservation.value) {
       await loadProductsForObservation(selectedObservation.value);
     }

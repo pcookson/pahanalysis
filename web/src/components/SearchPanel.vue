@@ -57,6 +57,9 @@ const formattedLastFetched = computed(() => {
   if (Number.isNaN(date.getTime())) return raw;
   return date.toLocaleString();
 });
+
+const coverageTooltipText =
+  "Nominal instrument coverage; actual product coverage may differ.";
 </script>
 
 <template>
@@ -270,7 +273,26 @@ const formattedLastFetched = computed(() => {
               @click="$emit('select-observation', row)"
             >
               <td class="px-3 py-2 align-top">{{ row.target_name || "—" }}</td>
-              <td class="px-3 py-2 align-top">{{ row.instrument_name || "—" }}</td>
+              <td class="px-3 py-2 align-top">
+                <p>{{ row.instrument_name || "—" }}</p>
+                <div
+                  v-if="row.instrumentCoverageLabel"
+                  class="mt-1 flex flex-wrap items-center gap-1.5"
+                >
+                  <span
+                    class="inline-flex rounded-full border border-cyan-200/20 bg-cyan-400/10 px-2 py-0.5 text-xs text-cyan-100"
+                  >
+                    {{ row.instrumentCoverageLabel }}
+                  </span>
+                  <span
+                    class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-white/15 text-[10px] text-slate-300"
+                    :title="coverageTooltipText"
+                    :aria-label="coverageTooltipText"
+                  >
+                    ?
+                  </span>
+                </div>
+              </td>
               <td class="px-3 py-2 align-top font-mono text-xs">{{ row.obsid || "—" }}</td>
               <td class="px-3 py-2 align-top">{{ row.proposal_id || "—" }}</td>
               <td class="px-3 py-2 align-top">

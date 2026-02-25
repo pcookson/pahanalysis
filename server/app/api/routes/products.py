@@ -5,7 +5,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pydantic import field_validator
 
-from app.db import get_pah_override, upsert_pah_override
+from app.db import (
+    get_pah_override,
+    upsert_cached_product_metadata,
+    upsert_pah_override,
+)
 
 from app.services.download_service import (
     DownloadServiceError,
@@ -35,6 +39,7 @@ router = APIRouter()
 
 class ProductDownloadRequest(BaseModel):
     product_id: str
+    target_name: str | None = None
 
 
 class ProductAnnotationRequest(BaseModel):
@@ -55,7 +60,14 @@ class ProductAnnotationRequest(BaseModel):
 @router.post("/products/download", response_model=None)
 def download_product_endpoint(payload: ProductDownloadRequest) -> Any:
     try:
-        return download_product(payload.product_id)
+        result = download_product(payload.product_id)
+        if result.get("filename"):
+            upsert_cached_product_metadata(
+                product_id=payload.product_id,
+                filename=str(result["filename"]),
+                target_name=payload.target_name,
+            )
+        return result
     except InvalidProductIdError as exc:
         return JSONResponse(
             status_code=400,
