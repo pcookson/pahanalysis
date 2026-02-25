@@ -34,7 +34,7 @@ class Settings:
         os.getenv("JWST_CACHE_DIR", "server/.cache/jwst")
     )
     sqlite_db_path: str = _resolve_repo_path(
-        os.getenv("SQLITE_DB_PATH", "data/app.db")
+        os.getenv("SQLITE_DB_PATH", "server/.cache/app.db")
     )
 
 

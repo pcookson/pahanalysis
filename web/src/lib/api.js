@@ -66,6 +66,10 @@ export function listProducts(obsid) {
   return request(`/api/obs/${encodeURIComponent(obsid)}/products`);
 }
 
+export function listCachedProducts() {
+  return request("/api/products/cached");
+}
+
 export function downloadProduct(product_id) {
   return request("/api/products/download", {
     method: "POST",
@@ -78,11 +82,35 @@ export function fetchSpectrum(product_id) {
   return request(`/api/products/spectrum?${params.toString()}`);
 }
 
+export function getPahScore(product_id, options = {}) {
+  const params = new URLSearchParams({ product_id });
+  if (options.force) {
+    params.set("force", "true");
+  }
+  return request(`/api/products/pah_score?${params.toString()}`);
+}
+
+export function getProductAnnotation(product_id) {
+  const params = new URLSearchParams({ product_id });
+  return request(`/api/products/annotation?${params.toString()}`);
+}
+
+export function putProductAnnotation(payload) {
+  return request("/api/products/annotation", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export const api = {
   health,
   mastPing,
   searchObservations,
   listProducts,
+  listCachedProducts,
   downloadProduct,
   fetchSpectrum,
+  getPahScore,
+  getProductAnnotation,
+  putProductAnnotation,
 };
