@@ -7,6 +7,7 @@ from typing import Any
 from astropy.io import fits
 
 from app.config import settings
+from app.db import get_cached_target_names_by_filename
 from app.services.download_service import JWST_PRODUCT_PREFIX
 
 
@@ -23,6 +24,7 @@ def list_cached_products() -> list[dict[str, Any]]:
     if not cache_root.exists():
         return []
 
+    cached_target_names = get_cached_target_names_by_filename()
     rows: list[dict[str, Any]] = []
     try:
         files = [p for p in cache_root.iterdir() if p.is_file()]
@@ -36,10 +38,16 @@ def list_cached_products() -> list[dict[str, Any]]:
             size = path.stat().st_size
         except OSError:
             size = None
+        target_name = None
+        if filename.lower().endswith(".fits"):
+            target_name = _read_target_name(path)
+        if not target_name:
+            target_name = cached_target_names.get(filename)
+
         rows.append(
             {
                 "product_id": f"{JWST_PRODUCT_PREFIX}{filename}",
-                "target_name": _read_target_name(path) if filename.lower().endswith(".fits") else None,
+                "target_name": target_name,
                 "productFilename": filename,
                 "kind": kind,
                 "is_plottable_candidate": is_plottable_candidate,

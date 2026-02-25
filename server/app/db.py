@@ -48,6 +48,22 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cached_product_metadata (
+                product_id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                target_name TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_cached_product_metadata_filename
+            ON cached_product_metadata(filename)
+            """
+        )
         conn.commit()
 
 
@@ -191,3 +207,59 @@ def upsert_pah_override(
         "note": note,
         "updated_at": updated_at,
     }
+
+
+def upsert_cached_product_metadata(
+    *,
+    product_id: str,
+    filename: str,
+    target_name: str | None,
+) -> None:
+    updated_at = datetime.now(timezone.utc).isoformat()
+    cleaned_target_name = _clean_optional_text(target_name)
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO cached_product_metadata (
+                product_id,
+                filename,
+                target_name,
+                updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(product_id) DO UPDATE SET
+                filename = excluded.filename,
+                target_name = COALESCE(excluded.target_name, cached_product_metadata.target_name),
+                updated_at = excluded.updated_at
+            """,
+            (product_id, filename, cleaned_target_name, updated_at),
+        )
+        conn.commit()
+
+
+def get_cached_target_names_by_filename() -> dict[str, str]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT filename, target_name, MAX(updated_at) AS updated_at
+            FROM cached_product_metadata
+            WHERE target_name IS NOT NULL AND TRIM(target_name) <> ''
+            GROUP BY filename
+            """
+        ).fetchall()
+
+    result: dict[str, str] = {}
+    for row in rows:
+        filename = row["filename"]
+        target_name = row["target_name"]
+        if not filename or not target_name:
+            continue
+        result[str(filename)] = str(target_name)
+    return result
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

@@ -70,10 +70,16 @@ export function listCachedProducts() {
   return request("/api/products/cached");
 }
 
-export function downloadProduct(product_id) {
+export function downloadProduct(product_id, options = {}) {
   return request("/api/products/download", {
     method: "POST",
-    body: JSON.stringify({ product_id }),
+    body: JSON.stringify({
+      product_id,
+      target_name:
+        typeof options.target_name === "string" && options.target_name.trim()
+          ? options.target_name.trim()
+          : null,
+    }),
   });
 }
 
