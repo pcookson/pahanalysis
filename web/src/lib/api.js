@@ -108,6 +108,20 @@ export function putProductAnnotation(payload) {
   });
 }
 
+export function fetchCubeMap(product_id, options = {}) {
+  const params = new URLSearchParams({ product_id });
+  if (options.waveMin != null) params.set("wave_min", String(options.waveMin));
+  if (options.waveMax != null) params.set("wave_max", String(options.waveMax));
+  return request(`/api/products/cube_map?${params.toString()}`);
+}
+
+export function extractCubeSpectrum(product_id, center_x, center_y, radius) {
+  return request("/api/products/cube_extract", {
+    method: "POST",
+    body: JSON.stringify({ product_id, center_x, center_y, radius }),
+  });
+}
+
 export const api = {
   health,
   mastPing,
@@ -119,4 +133,6 @@ export const api = {
   getPahScore,
   getProductAnnotation,
   putProductAnnotation,
+  fetchCubeMap,
+  extractCubeSpectrum,
 };

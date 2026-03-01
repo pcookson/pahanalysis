@@ -32,6 +32,13 @@ from app.services.pah_score_service import (
     PahScoreServiceError,
     get_or_compute_pah_score,
 )
+from app.services.cube_service import (
+    CubeNotCachedError,
+    CubeServiceError,
+    InvalidCubeProductError,
+    extract_cube_spectrum,
+    get_cube_spatial_map,
+)
 
 
 router = APIRouter()
@@ -40,6 +47,13 @@ router = APIRouter()
 class ProductDownloadRequest(BaseModel):
     product_id: str
     target_name: str | None = None
+
+
+class CubeExtractRequest(BaseModel):
+    product_id: str
+    center_x: float = Field(..., ge=0)
+    center_y: float = Field(..., ge=0)
+    radius: float = Field(..., gt=0, le=200)
 
 
 class ProductAnnotationRequest(BaseModel):
@@ -171,6 +185,57 @@ def put_product_annotation(payload: ProductAnnotationRequest) -> Any:
         user_confidence=payload.user_confidence,
         note=payload.note,
     )
+
+
+@router.get("/products/cube_map", response_model=None)
+def get_cube_map(
+    product_id: str = Query(...),
+    wave_min: float | None = Query(None),
+    wave_max: float | None = Query(None),
+) -> Any:
+    try:
+        return get_cube_spatial_map(product_id, wave_min=wave_min, wave_max=wave_max)
+    except InvalidCubeProductError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(exc)},
+        )
+    except CubeNotCachedError as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": str(exc)},
+        )
+    except CubeServiceError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "message": str(exc)},
+        )
+
+
+@router.post("/products/cube_extract", response_model=None)
+def cube_extract_spectrum(payload: CubeExtractRequest) -> Any:
+    try:
+        return extract_cube_spectrum(
+            payload.product_id,
+            center_x=payload.center_x,
+            center_y=payload.center_y,
+            radius=payload.radius,
+        )
+    except InvalidCubeProductError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(exc)},
+        )
+    except CubeNotCachedError as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": str(exc)},
+        )
+    except CubeServiceError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "message": str(exc)},
+        )
 
 
 @router.get("/products/cached", response_model=None)

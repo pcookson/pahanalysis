@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   ApiError,
   downloadProduct,
+  extractCubeSpectrum,
+  fetchCubeMap,
   fetchSpectrum,
   getPahScore,
   getProductAnnotation,
@@ -14,6 +16,7 @@ import {
   searchObservations,
 } from "./lib/api";
 import CachedProductsPanel from "./components/CachedProductsPanel.vue";
+import CubeExtractionPanel from "./components/CubeExtractionPanel.vue";
 import PlotPanel from "./components/PlotPanel.vue";
 import ProductsPanel from "./components/ProductsPanel.vue";
 import SearchPanel from "./components/SearchPanel.vue";
@@ -70,6 +73,11 @@ const plotState = ref({
 const productPlots = ref({});
 const plotContainerEl = ref(null);
 let plotlyModulePromise = null;
+
+const showCubePanel = ref(false);
+const cubeMapState = ref({ loading: false, error: "" });
+const cubeMapData = ref(null);
+const cubeExtractionState = ref({ loading: false, error: "" });
 
 const displayedProducts = computed(() => {
   const rows = Array.isArray(products.value) ? [...products.value] : [];
@@ -751,6 +759,65 @@ function updateOnlyLikelyPah(value) {
   };
 }
 
+async function handleOpenCube(product) {
+  showCubePanel.value = true;
+  cubeMapData.value = null;
+  cubeMapState.value = { loading: true, error: "" };
+  try {
+    const data = await fetchCubeMap(product.product_id);
+    cubeMapData.value = data;
+    cubeMapState.value = { loading: false, error: "" };
+  } catch (error) {
+    cubeMapState.value = {
+      loading: false,
+      error: error instanceof ApiError || error instanceof Error ? error.message : "Failed to load cube",
+    };
+  }
+}
+
+async function handleLoadCubeMap({ productId, waveMin, waveMax }) {
+  cubeMapState.value = { loading: true, error: "" };
+  try {
+    const data = await fetchCubeMap(productId, { waveMin, waveMax });
+    cubeMapData.value = data;
+    cubeMapState.value = { loading: false, error: "" };
+  } catch (error) {
+    cubeMapState.value = {
+      loading: false,
+      error: error instanceof ApiError || error instanceof Error ? error.message : "Failed to load cube map",
+    };
+  }
+}
+
+async function handleExtractCubeSpectrum({ productId, centerX, centerY, radius }) {
+  cubeExtractionState.value = { loading: true, error: "" };
+  plotState.value = { ...plotState.value, loading: true, error: "" };
+  try {
+    const spectrum = await extractCubeSpectrum(productId, centerX, centerY, radius);
+    await renderSpectrumPlot(spectrum);
+    plotState.value = {
+      loading: false,
+      error: "",
+      productId,
+      filename: spectrum?.filename || "",
+      segmentCount: 1,
+    };
+    cubeExtractionState.value = { loading: false, error: "" };
+  } catch (error) {
+    const message =
+      error instanceof ApiError || error instanceof Error ? error.message : "Extraction failed";
+    cubeExtractionState.value = { loading: false, error: message };
+    plotState.value = { ...plotState.value, loading: false, error: "" };
+  }
+}
+
+function handleCloseCube() {
+  showCubePanel.value = false;
+  cubeMapData.value = null;
+  cubeMapState.value = { loading: false, error: "" };
+  cubeExtractionState.value = { loading: false, error: "" };
+}
+
 async function handleDownloadProduct(product) {
   if (!product?.product_id) {
     return;
@@ -1032,12 +1099,23 @@ onMounted(() => {
               :product-list-options="productListOptions"
               @download-product="handleDownloadProduct"
               @plot-product="handlePlotProduct"
+              @open-cube-product="handleOpenCube"
               @score-product="handleScoreProduct"
               @update-annotation-draft="updateAnnotationDraft"
               @save-annotation="handleSaveAnnotation"
               @update-only-likely-pah="updateOnlyLikelyPah"
             />
           </div>
+
+          <CubeExtractionPanel
+            v-if="showCubePanel"
+            :cube-map-state="cubeMapState"
+            :cube-map-data="cubeMapData"
+            :cube-extraction-state="cubeExtractionState"
+            @load-cube-map="handleLoadCubeMap"
+            @extract-spectrum="handleExtractCubeSpectrum"
+            @close="handleCloseCube"
+          />
 
           <PlotPanel :plot-state="plotState">
             <div

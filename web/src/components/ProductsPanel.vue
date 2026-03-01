@@ -47,6 +47,7 @@ const props = defineProps({
 defineEmits([
   "download-product",
   "plot-product",
+  "open-cube-product",
   "score-product",
   "update-annotation-draft",
   "save-annotation",
@@ -473,6 +474,14 @@ const coverageTooltipText =
                           ? "Plotting..."
                           : "Plot"
                       }}
+                    </button>
+                    <button
+                      v-if="product.kind === 'cube3d' && product.is_cached"
+                      type="button"
+                      class="rounded-lg border border-violet-200/20 bg-violet-400/10 px-2.5 py-1 text-xs text-violet-100"
+                      @click="$emit('open-cube-product', product)"
+                    >
+                      Open Cube
                     </button>
                   </div>
                   <p
